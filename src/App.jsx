@@ -226,11 +226,14 @@ function App() {
     }
 
     function updateCamera(dt) {
-      const behind = new THREE.Vector3(Math.sin(state.yaw) * -18, 8.5, Math.cos(state.yaw) * 18)
+      const forward = new THREE.Vector3(Math.sin(state.yaw), 0, -Math.cos(state.yaw)).normalize()
+      const behind = forward.clone().multiplyScalar(-22)
       const targetPosition = state.position.clone().add(behind)
-      targetPosition.y += 2 + Math.abs(state.roll) * 2
+      targetPosition.y += 8.5
       camera.position.lerp(targetPosition, 1 - Math.pow(0.001, dt))
-      const lookAt = state.position.clone().add(new THREE.Vector3(Math.sin(state.yaw) * 8, 1.4, -Math.cos(state.yaw) * 8))
+
+      const lookAt = state.position.clone().add(forward.multiplyScalar(12))
+      lookAt.y += 1.5 + state.pitch * 2
       camera.lookAt(lookAt)
     }
 
@@ -270,22 +273,30 @@ function App() {
         const throttle = keys.has('ShiftLeft') || keys.has('ShiftRight')
         const brake = keys.has('Space')
 
-        const yawInput = (left ? 1 : 0) + (right ? -1 : 0) + state.mouseX * 0.0022
-        const pitchInput = (up ? 1 : 0) + (down ? -1 : 0) - state.mouseY * 0.002
+        const rollInput = (left ? 1 : 0) + (right ? -1 : 0) - state.mouseX * 0.0015
+        const pitchInput = (down ? 1 : 0) + (up ? -1 : 0) - state.mouseY * 0.0017
 
-        state.yaw += yawInput * dt * 1.18
-        state.pitch = clamp(state.pitch + pitchInput * dt * 0.82, -0.48, 0.45)
-        state.roll = lerp(state.roll, clamp(yawInput * 0.85, -0.82, 0.82), 1 - Math.pow(0.003, dt))
-        state.speed = clamp(state.speed + (throttle ? 18 : brake ? -24 : 1.8) * dt, 32, 72)
+        state.roll += rollInput * dt * 1.65
+        state.roll = Math.atan2(Math.sin(state.roll), Math.cos(state.roll))
 
-        const forward = new THREE.Vector3(Math.sin(state.yaw), state.pitch * 0.72, -Math.cos(state.yaw)).normalize()
+        const bankAmount = Math.abs(Math.sin(state.roll))
+        const uprightLift = Math.max(0, Math.cos(state.roll))
+        const coordinatedTurn = -Math.sin(state.roll) * (0.42 + state.speed / 115)
+        state.yaw += coordinatedTurn * dt
+
+        const rollNoseDrop = (1 - uprightLift) * 0.5 + bankAmount * 0.16
+        state.pitch = clamp(state.pitch + pitchInput * dt * 0.86 - rollNoseDrop * dt, -0.58, 0.5)
+        state.speed = clamp(state.speed + (throttle ? 18 : brake ? -24 : 1.8 + rollNoseDrop * 8) * dt, 32, 76)
+
+        const forward = new THREE.Vector3(Math.sin(state.yaw), state.pitch * 0.76, -Math.cos(state.yaw)).normalize()
         state.position.addScaledVector(forward, state.speed * dt)
-        state.position.y = clamp(state.position.y, 7, 74)
-        if (state.position.y > 69) state.pitch -= dt * 0.28
+        state.position.y -= ((1 - uprightLift) * 9 + bankAmount * 2.4) * dt
+        state.position.y = Math.min(state.position.y, 74)
+        if (state.position.y > 69) state.pitch -= dt * 0.32
 
         state.score += dt * state.speed * 0.55
-        state.mouseX *= 0.86
-        state.mouseY *= 0.86
+        state.mouseX *= 0.82
+        state.mouseY *= 0.82
 
         if (checkCrash()) {
           state.crashed = true
@@ -394,7 +405,7 @@ function App() {
       <div ref={mountRef} className="viewport" aria-label="Stratus playable 3D flight game" />
 
       <section className="hud controls">
-        <p><strong>Fly:</strong> WASD/Arrows · <strong>Boost:</strong> Shift · <strong>Brake:</strong> Space · <strong>Mouse:</strong> click window · <strong>Restart:</strong> R/Enter</p>
+        <p><strong>Stick:</strong> W nose down / S nose up · <strong>Bank:</strong> A/D or arrows · <strong>Boost:</strong> Shift · <strong>Brake:</strong> Space · <strong>Mouse:</strong> click window · <strong>Restart:</strong> R/Enter</p>
       </section>
 
       {hud.crashed && (
