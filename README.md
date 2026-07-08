@@ -45,10 +45,11 @@ Use these settings when connecting the GitHub repo to Cloudflare Pages:
 - Build command: `npm run build`
 - Build output directory: `dist`
 - Root directory: `/` if this repo only contains Stratus
-- Deploy command: leave blank / unset
+- Deploy command for Cloudflare Workers/static-assets flow: `npx wrangler deploy`
+- Classic Pages flow: leave deploy command blank and set build output directory to `dist`
 - Node version: Cloudflare default should work; use current LTS if Cloudflare asks
 
-Do not use `npx wrangler deploy` for the Git-connected Pages build. That command targets Workers-style deployment and will fail unless Worker/assets config is added. No backend, Worker, or deploy command is required for the current prototype.
+This repo supports Cloudflare's Workers static-assets deployment through `wrangler.toml`, and can also be deployed through the classic Pages static-site flow.
 
 ## GitHub setup handoff
 
