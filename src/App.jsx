@@ -183,6 +183,8 @@ function App() {
     const keys = new Set()
     const buildings = new Map()
     const spacing = 34
+    const worldUp = new THREE.Vector3(0, 1, 0)
+    const visualTarget = new THREE.Vector3()
 
     function resetGame() {
       state.position.set(0, 28, 16)
@@ -225,15 +227,29 @@ function App() {
       }
     }
 
-    function updateCamera(dt) {
-      const forward = new THREE.Vector3(Math.sin(state.yaw), 0, -Math.cos(state.yaw)).normalize()
-      const behind = forward.clone().multiplyScalar(-22)
-      const targetPosition = state.position.clone().add(behind)
-      targetPosition.y += 8.5
-      camera.position.lerp(targetPosition, 1 - Math.pow(0.001, dt))
+    function getForwardVector(includePitch = true) {
+      const climb = includePitch ? Math.sin(state.pitch) : 0
+      const level = includePitch ? Math.cos(state.pitch) : 1
+      return new THREE.Vector3(Math.sin(state.yaw) * level, climb, -Math.cos(state.yaw) * level).normalize()
+    }
 
-      const lookAt = state.position.clone().add(forward.multiplyScalar(12))
-      lookAt.y += 1.5 + state.pitch * 2
+    function updatePlaneVisual() {
+      const forward = getForwardVector(true)
+      visualTarget.copy(state.position).add(forward)
+      plane.position.copy(state.position)
+      plane.up.copy(worldUp)
+      plane.lookAt(visualTarget)
+      plane.rotateZ(state.roll)
+    }
+
+    function updateCamera(dt) {
+      const forward = getForwardVector(false)
+      const targetPosition = state.position.clone().addScaledVector(forward, -24)
+      targetPosition.y += 9.5
+      camera.position.lerp(targetPosition, 1 - Math.pow(0.0003, dt))
+
+      const lookAt = state.position.clone().addScaledVector(forward, 14)
+      lookAt.y += 1.7 + state.pitch * 3
       camera.lookAt(lookAt)
     }
 
@@ -281,14 +297,14 @@ function App() {
 
         const bankAmount = Math.abs(Math.sin(state.roll))
         const uprightLift = Math.max(0, Math.cos(state.roll))
-        const coordinatedTurn = -Math.sin(state.roll) * (0.42 + state.speed / 115)
+        const coordinatedTurn = -Math.sin(state.roll) * (0.72 + state.speed / 88)
         state.yaw += coordinatedTurn * dt
 
         const rollNoseDrop = (1 - uprightLift) * 0.5 + bankAmount * 0.16
         state.pitch = clamp(state.pitch + pitchInput * dt * 0.86 - rollNoseDrop * dt, -0.58, 0.5)
         state.speed = clamp(state.speed + (throttle ? 18 : brake ? -24 : 1.8 + rollNoseDrop * 8) * dt, 32, 76)
 
-        const forward = new THREE.Vector3(Math.sin(state.yaw), state.pitch * 0.76, -Math.cos(state.yaw)).normalize()
+        const forward = getForwardVector(true)
         state.position.addScaledVector(forward, state.speed * dt)
         state.position.y -= ((1 - uprightLift) * 9 + bankAmount * 2.4) * dt
         state.position.y = Math.min(state.position.y, 74)
@@ -304,8 +320,7 @@ function App() {
         }
       }
 
-      plane.position.copy(state.position)
-      plane.rotation.set(state.pitch * 0.9, state.yaw, state.roll)
+      updatePlaneVisual()
       plane.userData.prop.rotation.z += dt * state.speed * 2.7
       ground.position.x = state.position.x
       ground.position.z = state.position.z
