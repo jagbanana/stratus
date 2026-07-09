@@ -235,7 +235,10 @@ function App() {
 
     function updatePlaneVisual() {
       const forward = getForwardVector(true)
-      visualTarget.copy(state.position).add(forward)
+      // Three.js object lookAt points local +Z at the target. Our plane model's
+      // nose/prop live on local -Z, so aim +Z backward to keep the nose aligned
+      // with the actual flight vector.
+      visualTarget.copy(state.position).addScaledVector(forward, -1)
       plane.position.copy(state.position)
       plane.up.copy(worldUp)
       plane.lookAt(visualTarget)
