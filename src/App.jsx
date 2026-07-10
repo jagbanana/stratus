@@ -250,6 +250,10 @@ function App() {
     const worldUp = new THREE.Vector3(0, 1, 0)
     const visualTarget = new THREE.Vector3()
     const tempVector = new THREE.Vector3()
+    const previousPlanePosition = new THREE.Vector3()
+    const cameraViewProjection = new THREE.Matrix4()
+    const cameraFrustum = new THREE.Frustum()
+    const targetSphere = new THREE.Sphere()
     const audio = { context: null, master: null, unlocked: false }
 
     function getAudioContext() {
@@ -433,6 +437,15 @@ function App() {
       const lookAt = state.position.clone().addScaledVector(forward, 14)
       lookAt.y += 1.7 + state.pitch * 3
       camera.lookAt(lookAt)
+      camera.updateMatrixWorld()
+      cameraViewProjection.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse)
+      cameraFrustum.setFromProjectionMatrix(cameraViewProjection)
+    }
+
+    function isTargetVisibleToPlayer(target) {
+      targetSphere.center.copy(target.mesh.position)
+      targetSphere.radius = target.radius
+      return cameraFrustum.intersectsSphere(targetSphere)
     }
 
     function makeTracer(start, forward) {
@@ -584,6 +597,15 @@ function App() {
       }
     }
 
+    function awardTarget(target, points) {
+      state.score += points
+      state.hits += 1
+      playTargetHitSound()
+      createExplosion(target.mesh.position)
+      addScorePopup(target.mesh.position, points)
+      placeTarget(target, true)
+    }
+
     function updateBullets(dt) {
       for (let index = bullets.length - 1; index >= 0; index -= 1) {
         const bullet = bullets[index]
@@ -597,6 +619,7 @@ function App() {
 
         let hitTarget = null
         for (const target of targets) {
+          if (!isTargetVisibleToPlayer(target)) continue
           if (bullet.position.distanceToSquared(target.mesh.position) < target.radius * target.radius) {
             hitTarget = target
             break
@@ -604,18 +627,32 @@ function App() {
         }
 
         if (hitTarget) {
-          const points = 300
-          state.score += points
-          state.hits += 1
-          playTargetHitSound()
-          createExplosion(hitTarget.mesh.position)
-          addScorePopup(hitTarget.mesh.position, points)
-          placeTarget(hitTarget, true)
+          awardTarget(hitTarget, 300)
           effectGroup.remove(bullet.mesh)
           bullets.splice(index, 1)
         } else if (bullet.ttl <= 0) {
           effectGroup.remove(bullet.mesh)
           bullets.splice(index, 1)
+        }
+      }
+    }
+
+    function checkTargetFlyThrough() {
+      const planeRadius = 2.35
+      for (const target of targets) {
+        const combinedRadius = target.radius + planeRadius
+        const path = tempVector.copy(state.position).sub(previousPlanePosition)
+        const pathLengthSq = path.lengthSq()
+        let closestDistanceSq
+        if (pathLengthSq > 0.0001) {
+          const t = clamp(target.mesh.position.clone().sub(previousPlanePosition).dot(path) / pathLengthSq, 0, 1)
+          closestDistanceSq = previousPlanePosition.clone().addScaledVector(path, t).distanceToSquared(target.mesh.position)
+        } else {
+          closestDistanceSq = state.position.distanceToSquared(target.mesh.position)
+        }
+        if (closestDistanceSq < combinedRadius * combinedRadius) {
+          awardTarget(target, 500)
+          return
         }
       }
     }
@@ -734,6 +771,7 @@ function App() {
         state.pitch = clamp(state.pitch + pitchInput * dt * 0.86 - rollNoseDrop * dt, -0.58, 0.5)
         state.speed = clamp(state.speed + (throttle ? 18 : 1.8 + rollNoseDrop * 8) * dt, 32, 76)
 
+        previousPlanePosition.copy(state.position)
         const forward = getForwardVector(true)
         state.position.addScaledVector(forward, state.speed * dt)
         state.position.y -= ((1 - uprightLift) * 9 + bankAmount * 2.4) * dt
@@ -745,6 +783,8 @@ function App() {
           fireGuns()
           state.fireCooldown = 0.085
         }
+
+        checkTargetFlyThrough()
 
         state.score += dt * state.speed * 0.55
         state.mouseX *= 0.82
@@ -760,6 +800,7 @@ function App() {
       }
 
       if (!state.crashed) updatePlaneVisual()
+      updateCamera(dt)
       updateBullets(dt)
       updateExplosions(dt)
       updateCrashPieces(dt)
@@ -775,7 +816,6 @@ function App() {
       grid.position.x = Math.round(state.position.x / spacing) * spacing
       grid.position.z = Math.round(state.position.z / spacing) * spacing
 
-      updateCamera(dt)
       updateScorePopups(dt)
       renderer.render(scene, camera)
 
