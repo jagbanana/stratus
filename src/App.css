@@ -35,6 +35,31 @@
   image-rendering: pixelated;
 }
 
+.popup-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.score-pop {
+  position: absolute;
+  left: 0;
+  top: 0;
+  color: #fff7ff;
+  font-size: clamp(1.55rem, 4vw, 3.2rem);
+  font-weight: 1000;
+  letter-spacing: -0.04em;
+  text-shadow:
+    0 0 8px rgba(255, 255, 255, 0.95),
+    0 0 18px rgba(255, 43, 214, 0.95),
+    0 0 30px rgba(22, 247, 255, 0.78);
+  transform-origin: center;
+  translate: -50% -50%;
+  will-change: transform, opacity;
+}
+
 .hud {
   position: absolute;
   z-index: 5;
