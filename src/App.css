@@ -153,6 +153,99 @@ strong {
   color: rgba(248, 244, 255, 0.78);
 }
 
+.initials-form {
+  margin: 18px 0;
+  padding: 14px;
+  border: 1px solid rgba(255, 176, 0, 0.36);
+  background: rgba(5, 3, 10, 0.38);
+}
+
+.initials-form label {
+  display: block;
+  margin-bottom: 8px;
+  color: #ffb000;
+  font-size: 0.72rem;
+  font-weight: 900;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  text-shadow: 0 0 12px rgba(255, 176, 0, 0.75);
+}
+
+.initials-row {
+  display: grid;
+  grid-template-columns: 104px 1fr;
+  gap: 10px;
+}
+
+.initials-row input {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid rgba(22, 247, 255, 0.75);
+  border-radius: 0;
+  padding: 10px 8px;
+  color: #fff7ff;
+  background: rgba(19, 7, 34, 0.92);
+  font: inherit;
+  font-size: 1.45rem;
+  font-weight: 1000;
+  letter-spacing: 0.18em;
+  text-align: center;
+  text-transform: uppercase;
+  outline: none;
+  box-shadow: inset 0 0 18px rgba(22, 247, 255, 0.12), 0 0 18px rgba(255, 43, 214, 0.16);
+}
+
+.score-saved {
+  margin: 16px 0;
+  color: #ffb000;
+  font-weight: 800;
+}
+
+.leaderboard {
+  margin: 18px 0;
+  padding: 14px;
+  border: 1px solid rgba(22, 247, 255, 0.28);
+  background: rgba(5, 3, 10, 0.34);
+}
+
+.leaderboard ol {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px 18px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: decimal-leading-zero inside;
+}
+
+.leaderboard li {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  color: rgba(248, 244, 255, 0.78);
+  font-size: 0.9rem;
+  font-weight: 800;
+}
+
+.leaderboard li::marker {
+  color: #16f7ff;
+}
+
+.leaderboard li span {
+  color: #fff7ff;
+  letter-spacing: 0.16em;
+}
+
+.leaderboard li strong {
+  font-size: 0.95rem;
+}
+
+.leaderboard .empty-score strong {
+  font-size: 0.85rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
 .modal-card button {
   width: 100%;
   border: 1px solid rgba(22, 247, 255, 0.7);
@@ -183,5 +276,10 @@ strong {
     left: 10px;
     right: 10px;
     bottom: 10px;
+  }
+
+  .initials-row,
+  .leaderboard ol {
+    grid-template-columns: 1fr;
   }
 }

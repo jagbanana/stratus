@@ -4,6 +4,36 @@ import './App.css'
 
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value))
 const lerp = (a, b, t) => a + (b - a) * t
+const HIGH_SCORE_COOKIE = 'stratus_high_scores'
+
+function readHighScores() {
+  if (typeof document === 'undefined') return []
+  const cookie = document.cookie
+    .split('; ')
+    .find((entry) => entry.startsWith(`${HIGH_SCORE_COOKIE}=`))
+  if (!cookie) return []
+
+  try {
+    const parsed = JSON.parse(decodeURIComponent(cookie.split('=').slice(1).join('=')))
+    if (!Array.isArray(parsed)) return []
+    return parsed
+      .map((entry) => ({
+        initials: String(entry.initials || 'AAA').replace(/[^A-Z0-9]/gi, '').slice(0, 3).toUpperCase().padEnd(3, 'A'),
+        score: Math.max(0, Math.floor(Number(entry.score) || 0)),
+      }))
+      .filter((entry) => entry.score > 0)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 10)
+  } catch {
+    return []
+  }
+}
+
+function writeHighScores(scores) {
+  if (typeof document === 'undefined') return
+  const maxAge = 60 * 60 * 24 * 365
+  document.cookie = `${HIGH_SCORE_COOKIE}=${encodeURIComponent(JSON.stringify(scores))}; path=/; max-age=${maxAge}; SameSite=Lax`
+}
 
 function hashCell(x, z) {
   const n = Math.sin(x * 127.1 + z * 311.7) * 43758.5453123
@@ -169,6 +199,23 @@ function App() {
   const popupsRef = useRef(null)
   const restartRef = useRef(null)
   const [hud, setHud] = useState({ score: 0, speed: 0, altitude: 0, hits: 0, crashed: false, started: false })
+  const [highScores, setHighScores] = useState(() => readHighScores())
+  const [initials, setInitials] = useState('ACE')
+  const [scoreSubmitted, setScoreSubmitted] = useState(false)
+
+  const highScore = highScores[0]?.score || 0
+
+  function submitHighScore(event) {
+    event.preventDefault()
+    const cleanInitials = initials.replace(/[^A-Z0-9]/gi, '').slice(0, 3).toUpperCase().padEnd(3, 'A')
+    const nextScores = [...highScores, { initials: cleanInitials, score: hud.score }]
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 10)
+    setInitials(cleanInitials)
+    setHighScores(nextScores)
+    writeHighScores(nextScores)
+    setScoreSubmitted(true)
+  }
 
   useEffect(() => {
     const mount = mountRef.current
@@ -374,6 +421,7 @@ function App() {
       state.crashed = false
       state.lastTime = performance.now()
       plane.visible = true
+      setScoreSubmitted(false)
       setHud({ score: 0, speed: state.speed, altitude: state.position.y, hits: 0, crashed: false, started: true })
     }
 
@@ -836,11 +884,12 @@ function App() {
     }
 
     function onKeyDown(event) {
-      if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(event.code)) event.preventDefault()
+      const isTextEntry = event.target instanceof HTMLInputElement
+      if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(event.code) && !isTextEntry) event.preventDefault()
       getAudioContext()
-      if (event.code === 'Enter' || event.code === 'KeyR') resetGame()
-      keys.add(event.code)
-      if (!state.started && ['KeyW', 'ArrowUp', 'Space'].includes(event.code)) resetGame()
+      if (!isTextEntry && (event.code === 'Enter' || event.code === 'KeyR')) resetGame()
+      if (!isTextEntry) keys.add(event.code)
+      if (!isTextEntry && !state.started && ['KeyW', 'ArrowUp', 'Space'].includes(event.code)) resetGame()
     }
 
     function onKeyUp(event) {
@@ -902,6 +951,10 @@ function App() {
           <strong>{hud.score.toLocaleString()} pts</strong>
         </div>
         <div>
+          <span className="label">HIGH</span>
+          <strong>{Math.max(highScore, hud.score).toLocaleString()}</strong>
+        </div>
+        <div>
           <span className="label">HITS</span>
           <strong>{hud.hits}</strong>
         </div>
@@ -928,6 +981,40 @@ function App() {
             <span className="label">airframe status</span>
             <h1>Decorative crater achieved.</h1>
             <p>Final score: {hud.score.toLocaleString()} points · {hud.hits} targets popped</p>
+
+            {!scoreSubmitted ? (
+              <form className="initials-form" onSubmit={submitHighScore}>
+                <label htmlFor="initials">Enter initials</label>
+                <div className="initials-row">
+                  <input
+                    id="initials"
+                    value={initials}
+                    maxLength={3}
+                    autoFocus
+                    onChange={(event) => setInitials(event.target.value.replace(/[^a-z0-9]/gi, '').toUpperCase())}
+                    aria-label="Three initials for high score"
+                  />
+                  <button type="submit">Save score</button>
+                </div>
+              </form>
+            ) : (
+              <p className="score-saved">Score saved. Immortality achieved, subject to cookie retention.</p>
+            )}
+
+            <div className="leaderboard" aria-label="Top 10 high scores">
+              <span className="label">top pilots</span>
+              <ol>
+                {highScores.length > 0 ? highScores.map((entry, index) => (
+                  <li key={`${entry.initials}-${entry.score}-${index}`}>
+                    <span>{entry.initials}</span>
+                    <strong>{entry.score.toLocaleString()}</strong>
+                  </li>
+                )) : (
+                  <li className="empty-score"><span>---</span><strong>no scores yet</strong></li>
+                )}
+              </ol>
+            </div>
+
             <button type="button" onClick={() => restartRef.current?.()}>Click, R, or Enter to fly again</button>
           </div>
         </div>
