@@ -234,6 +234,7 @@ function App() {
       lastTime: performance.now(),
       hudTime: 0,
       fireCooldown: 0,
+      crashModalDelay: 0,
       mouseX: 0,
       mouseY: 0,
     }
@@ -243,6 +244,7 @@ function App() {
     const bullets = []
     const targets = []
     const explosions = []
+    const crashPieces = []
     const popups = []
     const spacing = 34
     const worldUp = new THREE.Vector3(0, 1, 0)
@@ -253,6 +255,7 @@ function App() {
       bullets.splice(0).forEach((bullet) => effectGroup.remove(bullet.mesh))
       targets.splice(0).forEach((target) => targetGroup.remove(target.mesh))
       explosions.splice(0).forEach((particle) => effectGroup.remove(particle.mesh))
+      crashPieces.splice(0).forEach((piece) => effectGroup.remove(piece.mesh))
       popups.splice(0).forEach((popup) => popup.element.remove())
     }
 
@@ -266,9 +269,11 @@ function App() {
       state.score = 0
       state.hits = 0
       state.fireCooldown = 0
+      state.crashModalDelay = 0
       state.started = true
       state.crashed = false
       state.lastTime = performance.now()
+      plane.visible = true
       setHud({ score: 0, speed: state.speed, altitude: state.position.y, hits: 0, crashed: false, started: true })
     }
 
@@ -368,6 +373,68 @@ function App() {
         )
         explosions.push({ mesh, velocity, ttl: 0.82, age: 0 })
       }
+    }
+
+    function addCrashPiece(geometry, material, localPosition, localRotation, localScale, velocity, spin, ttl = 3.8) {
+      const pieceMaterial = material.clone()
+      pieceMaterial.transparent = true
+      const mesh = new THREE.Mesh(geometry, pieceMaterial)
+      mesh.position.copy(plane.localToWorld(localPosition.clone()))
+      mesh.quaternion.copy(plane.quaternion)
+      mesh.rotation.x += localRotation.x
+      mesh.rotation.y += localRotation.y
+      mesh.rotation.z += localRotation.z
+      mesh.scale.copy(localScale)
+      effectGroup.add(mesh)
+      crashPieces.push({ mesh, velocity, spin, ttl, age: 0 })
+    }
+
+    function createCrashEffect() {
+      const impact = state.position.clone()
+      const forward = getForwardVector(true)
+      const right = getRightVector()
+      const up = worldUp.clone()
+      const base = forward.clone().multiplyScalar(24)
+
+      plane.visible = false
+      createExplosion(impact)
+      for (let i = 0; i < 62; i += 1) {
+        const mesh = new THREE.Mesh(
+          new THREE.BoxGeometry(0.42, 0.42, 0.42),
+          new THREE.MeshBasicMaterial({ color: i % 3 === 0 ? 0xfff15a : i % 3 === 1 ? 0xff2bd6 : 0x16f7ff, transparent: true, opacity: 1 }),
+        )
+        mesh.position.copy(impact)
+        effectGroup.add(mesh)
+        const velocity = base.clone()
+          .addScaledVector(right, (Math.random() - 0.5) * 70)
+          .addScaledVector(up, Math.random() * 58)
+          .add(new THREE.Vector3((Math.random() - 0.5) * 18, 0, (Math.random() - 0.5) * 18))
+        explosions.push({ mesh, velocity, ttl: 1.35, age: 0 })
+      }
+
+      const metal = new THREE.MeshStandardMaterial({ color: 0xd7d7ff, roughness: 0.72, metalness: 0.25 })
+      const cyan = new THREE.MeshStandardMaterial({ color: 0x19f5ff, emissive: 0x063a44, roughness: 0.52, metalness: 0.18 })
+      const magenta = new THREE.MeshStandardMaterial({ color: 0xff5ac8, emissive: 0x4d092f, roughness: 0.5, metalness: 0.18 })
+      const amber = new THREE.MeshStandardMaterial({ color: 0xffb000, emissive: 0x4b2a00, roughness: 0.58, metalness: 0.12 })
+      const white = new THREE.MeshBasicMaterial({ color: 0xf8f8ff, transparent: true, opacity: 0.82 })
+      const scatter = [
+        [new THREE.BoxGeometry(1.0, 0.75, 2.1), metal, new THREE.Vector3(0, 0, -0.9), new THREE.Euler(0.3, 0.1, 0.4), new THREE.Vector3(1, 1, 1), 0.2, 0.5, 42],
+        [new THREE.BoxGeometry(0.9, 0.68, 1.8), metal, new THREE.Vector3(0, 0, 1.0), new THREE.Euler(-0.25, 0.2, -0.2), new THREE.Vector3(1, 1, 1), -0.15, 0.45, 36],
+        [new THREE.BoxGeometry(3.2, 0.14, 0.95), cyan, new THREE.Vector3(-1.8, 0, -0.3), new THREE.Euler(0.1, 0.15, -0.2), new THREE.Vector3(1, 1, 1), -1.1, 0.2, 54],
+        [new THREE.BoxGeometry(3.2, 0.14, 0.95), cyan, new THREE.Vector3(1.8, 0, -0.3), new THREE.Euler(-0.1, -0.15, 0.2), new THREE.Vector3(1, 1, 1), 1.1, 0.2, 54],
+        [new THREE.ConeGeometry(0.66, 1.1, 6), magenta, new THREE.Vector3(0, 0, -2.65), new THREE.Euler(Math.PI / 2, 0, 0), new THREE.Vector3(1, 1, 1), 0, 1.0, 48],
+        [new THREE.BoxGeometry(2.8, 0.12, 0.65), amber, new THREE.Vector3(0, 0.3, 2.0), new THREE.Euler(0.2, 0.1, 0.1), new THREE.Vector3(1, 1, 1), 0, -0.8, 40],
+        [new THREE.BoxGeometry(0.18, 1.2, 0.72), magenta, new THREE.Vector3(0, 0.78, 1.88), new THREE.Euler(0.3, -0.25, 0.2), new THREE.Vector3(1, 1, 1), 0.3, 0.9, 45],
+        [new THREE.BoxGeometry(0.14, 3.1, 0.12), white, new THREE.Vector3(0, 0, -3.28), new THREE.Euler(0, 0, 0), new THREE.Vector3(1, 1, 1), 0, 1.35, 64],
+      ]
+
+      scatter.forEach(([geometry, material, localPosition, localRotation, localScale, side, lift, speed]) => {
+        const velocity = base.clone()
+          .addScaledVector(right, side * speed + (Math.random() - 0.5) * 18)
+          .addScaledVector(up, lift * speed + Math.random() * 16)
+        const spin = new THREE.Vector3((Math.random() - 0.5) * 12, (Math.random() - 0.5) * 12, (Math.random() - 0.5) * 12)
+        addCrashPiece(geometry, material, localPosition, localRotation, localScale, velocity, spin)
+      })
     }
 
     function addScorePopup(position, points) {
@@ -472,6 +539,32 @@ function App() {
       }
     }
 
+    function updateCrashPieces(dt) {
+      for (let index = crashPieces.length - 1; index >= 0; index -= 1) {
+        const piece = crashPieces[index]
+        piece.age += dt
+        piece.ttl -= dt
+        piece.velocity.y -= 24 * dt
+        piece.mesh.position.addScaledVector(piece.velocity, dt)
+        piece.mesh.rotation.x += piece.spin.x * dt
+        piece.mesh.rotation.y += piece.spin.y * dt
+        piece.mesh.rotation.z += piece.spin.z * dt
+        if (piece.mesh.position.y < 1.5) {
+          piece.mesh.position.y = 1.5
+          piece.velocity.y *= -0.22
+          piece.velocity.x *= 0.72
+          piece.velocity.z *= 0.72
+        }
+        if (piece.mesh.material.opacity !== undefined) {
+          piece.mesh.material.opacity = clamp(piece.ttl / 1.2, 0, 1)
+        }
+        if (piece.ttl <= 0) {
+          effectGroup.remove(piece.mesh)
+          crashPieces.splice(index, 1)
+        }
+      }
+    }
+
     function updateScorePopups(dt) {
       const width = mount.clientWidth
       const height = mount.clientHeight
@@ -559,15 +652,25 @@ function App() {
         state.mouseY *= 0.82
 
         if (checkCrash()) {
+          updatePlaneVisual()
           state.crashed = true
-          setHud({ score: Math.floor(state.score), speed: state.speed, altitude: state.position.y, hits: state.hits, crashed: true, started: true })
+          state.crashModalDelay = 1.25
+          createCrashEffect()
+          setHud({ score: Math.floor(state.score), speed: Math.round(state.speed), altitude: Math.round(state.position.y), hits: state.hits, crashed: false, started: true })
         }
       }
 
-      updatePlaneVisual()
+      if (!state.crashed) updatePlaneVisual()
       updateBullets(dt)
       updateExplosions(dt)
-      plane.userData.prop.rotation.z += dt * state.speed * 2.7
+      updateCrashPieces(dt)
+      if (plane.visible) plane.userData.prop.rotation.z += dt * state.speed * 2.7
+      if (state.crashed && state.crashModalDelay > 0) {
+        state.crashModalDelay -= dt
+        if (state.crashModalDelay <= 0) {
+          setHud({ score: Math.floor(state.score), speed: Math.round(state.speed), altitude: Math.round(state.position.y), hits: state.hits, crashed: true, started: true })
+        }
+      }
       ground.position.x = state.position.x
       ground.position.z = state.position.z
       grid.position.x = Math.round(state.position.x / spacing) * spacing
