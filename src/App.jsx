@@ -250,6 +250,102 @@ function App() {
     const worldUp = new THREE.Vector3(0, 1, 0)
     const visualTarget = new THREE.Vector3()
     const tempVector = new THREE.Vector3()
+    const audio = { context: null, master: null, unlocked: false }
+
+    function getAudioContext() {
+      const AudioContext = window.AudioContext || window.webkitAudioContext
+      if (!AudioContext) return null
+      if (!audio.context) {
+        audio.context = new AudioContext()
+        audio.master = audio.context.createGain()
+        audio.master.gain.value = 0.38
+        audio.master.connect(audio.context.destination)
+      }
+      if (audio.context.state === 'suspended') audio.context.resume()
+      audio.unlocked = true
+      return audio.context
+    }
+
+    function playTone({ frequency = 440, endFrequency = frequency, type = 'square', gain = 0.2, duration = 0.12, delay = 0, pan = 0 }) {
+      const context = getAudioContext()
+      if (!context || !audio.master) return
+      const start = context.currentTime + delay
+      const oscillator = context.createOscillator()
+      const envelope = context.createGain()
+      const stereo = context.createStereoPanner?.()
+
+      oscillator.type = type
+      oscillator.frequency.setValueAtTime(frequency, start)
+      oscillator.frequency.exponentialRampToValueAtTime(Math.max(20, endFrequency), start + duration)
+      envelope.gain.setValueAtTime(0.0001, start)
+      envelope.gain.exponentialRampToValueAtTime(gain, start + 0.008)
+      envelope.gain.exponentialRampToValueAtTime(0.0001, start + duration)
+
+      oscillator.connect(envelope)
+      if (stereo) {
+        stereo.pan.value = pan
+        envelope.connect(stereo)
+        stereo.connect(audio.master)
+      } else {
+        envelope.connect(audio.master)
+      }
+      oscillator.start(start)
+      oscillator.stop(start + duration + 0.03)
+    }
+
+    function playNoise({ gain = 0.25, duration = 0.2, delay = 0, lowpass = 1800, pan = 0 }) {
+      const context = getAudioContext()
+      if (!context || !audio.master) return
+      const start = context.currentTime + delay
+      const buffer = context.createBuffer(1, Math.ceil(context.sampleRate * duration), context.sampleRate)
+      const data = buffer.getChannelData(0)
+      for (let i = 0; i < data.length; i += 1) {
+        const fade = 1 - i / data.length
+        data[i] = (Math.random() * 2 - 1) * fade
+      }
+
+      const source = context.createBufferSource()
+      const filter = context.createBiquadFilter()
+      const envelope = context.createGain()
+      const stereo = context.createStereoPanner?.()
+      source.buffer = buffer
+      filter.type = 'lowpass'
+      filter.frequency.setValueAtTime(lowpass, start)
+      filter.frequency.exponentialRampToValueAtTime(80, start + duration)
+      envelope.gain.setValueAtTime(gain, start)
+      envelope.gain.exponentialRampToValueAtTime(0.0001, start + duration)
+
+      source.connect(filter)
+      filter.connect(envelope)
+      if (stereo) {
+        stereo.pan.value = pan
+        envelope.connect(stereo)
+        stereo.connect(audio.master)
+      } else {
+        envelope.connect(audio.master)
+      }
+      source.start(start)
+      source.stop(start + duration + 0.02)
+    }
+
+    function playShootSound() {
+      playNoise({ gain: 0.09, duration: 0.055, lowpass: 4200, pan: -0.24 })
+      playNoise({ gain: 0.09, duration: 0.055, delay: 0.012, lowpass: 4200, pan: 0.24 })
+      playTone({ frequency: 155, endFrequency: 78, type: 'sawtooth', gain: 0.08, duration: 0.07 })
+    }
+
+    function playTargetHitSound() {
+      playTone({ frequency: 880, endFrequency: 1320, type: 'triangle', gain: 0.18, duration: 0.08 })
+      playTone({ frequency: 1320, endFrequency: 1760, type: 'triangle', gain: 0.14, duration: 0.12, delay: 0.045 })
+      playNoise({ gain: 0.12, duration: 0.12, lowpass: 5200 })
+    }
+
+    function playCrashSound() {
+      playNoise({ gain: 0.5, duration: 0.85, lowpass: 2400 })
+      playNoise({ gain: 0.28, duration: 0.38, delay: 0.08, lowpass: 5600 })
+      playTone({ frequency: 95, endFrequency: 34, type: 'sawtooth', gain: 0.32, duration: 0.78 })
+      playTone({ frequency: 55, endFrequency: 28, type: 'square', gain: 0.22, duration: 0.9, delay: 0.05 })
+    }
 
     function clearGameplayObjects() {
       bullets.splice(0).forEach((bullet) => effectGroup.remove(bullet.mesh))
@@ -349,6 +445,7 @@ function App() {
     }
 
     function fireGuns() {
+      playShootSound()
       const forward = getForwardVector(true)
       ;[-3.25, 3.25].forEach((x) => {
         const start = plane.localToWorld(new THREE.Vector3(x, -0.02, -0.92))
@@ -397,6 +494,7 @@ function App() {
       const base = forward.clone().multiplyScalar(24)
 
       plane.visible = false
+      playCrashSound()
       createExplosion(impact)
       for (let i = 0; i < 62; i += 1) {
         const mesh = new THREE.Mesh(
@@ -509,6 +607,7 @@ function App() {
           const points = 300
           state.score += points
           state.hits += 1
+          playTargetHitSound()
           createExplosion(hitTarget.mesh.position)
           addScorePopup(hitTarget.mesh.position, points)
           placeTarget(hitTarget, true)
@@ -698,6 +797,7 @@ function App() {
 
     function onKeyDown(event) {
       if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(event.code)) event.preventDefault()
+      getAudioContext()
       if (event.code === 'Enter' || event.code === 'KeyR') resetGame()
       keys.add(event.code)
       if (!state.started && ['KeyW', 'ArrowUp', 'Space'].includes(event.code)) resetGame()
@@ -715,6 +815,7 @@ function App() {
     }
 
     function onClick() {
+      getAudioContext()
       if (!state.started || state.crashed) resetGame()
       renderer.domElement.requestPointerLock?.()
     }
@@ -746,6 +847,7 @@ function App() {
       window.removeEventListener('resize', onResize)
       window.removeEventListener('mousemove', onMouseMove)
       renderer.domElement.removeEventListener('click', onClick)
+      if (audio.context) audio.context.close()
       if (renderer.domElement.parentElement === mount) mount.removeChild(renderer.domElement)
       renderer.dispose()
     }
