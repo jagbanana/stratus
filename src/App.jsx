@@ -5,6 +5,7 @@ import './App.css'
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value))
 const lerp = (a, b, t) => a + (b - a) * t
 const HIGH_SCORE_COOKIE = 'stratus_high_scores'
+const MUSIC_PREF_KEY = 'stratus_music_enabled'
 
 function readHighScores() {
   if (typeof document === 'undefined') return []
@@ -33,6 +34,16 @@ function writeHighScores(scores) {
   if (typeof document === 'undefined') return
   const maxAge = 60 * 60 * 24 * 365
   document.cookie = `${HIGH_SCORE_COOKIE}=${encodeURIComponent(JSON.stringify(scores))}; path=/; max-age=${maxAge}; SameSite=Lax`
+}
+
+function readMusicPreference() {
+  if (typeof window === 'undefined') return true
+  return window.localStorage.getItem(MUSIC_PREF_KEY) !== 'off'
+}
+
+function writeMusicPreference(enabled) {
+  if (typeof window === 'undefined') return
+  window.localStorage.setItem(MUSIC_PREF_KEY, enabled ? 'on' : 'off')
 }
 
 function hashCell(x, z) {
@@ -198,12 +209,25 @@ function App() {
   const mountRef = useRef(null)
   const popupsRef = useRef(null)
   const restartRef = useRef(null)
+  const musicControlsRef = useRef(null)
   const [hud, setHud] = useState({ score: 0, speed: 0, altitude: 0, hits: 0, crashed: false, started: false })
   const [highScores, setHighScores] = useState(() => readHighScores())
   const [initials, setInitials] = useState('ACE')
   const [scoreSubmitted, setScoreSubmitted] = useState(false)
+  const [musicEnabled, setMusicEnabled] = useState(() => readMusicPreference())
+  const musicEnabledRef = useRef(musicEnabled)
 
   const highScore = highScores[0]?.score || 0
+
+  useEffect(() => {
+    musicEnabledRef.current = musicEnabled
+    writeMusicPreference(musicEnabled)
+    if (musicEnabled) {
+      musicControlsRef.current?.start()
+    } else {
+      musicControlsRef.current?.stop()
+    }
+  }, [musicEnabled])
 
   function submitHighScore(event) {
     event.preventDefault()
@@ -301,7 +325,7 @@ function App() {
     const cameraViewProjection = new THREE.Matrix4()
     const cameraFrustum = new THREE.Frustum()
     const targetSphere = new THREE.Sphere()
-    const audio = { context: null, master: null, unlocked: false }
+    const audio = { context: null, master: null, music: null, musicLoop: null, musicPlaying: false, unlocked: false }
 
     function getAudioContext() {
       const AudioContext = window.AudioContext || window.webkitAudioContext
@@ -309,11 +333,15 @@ function App() {
       if (!audio.context) {
         audio.context = new AudioContext()
         audio.master = audio.context.createGain()
+        audio.music = audio.context.createGain()
         audio.master.gain.value = 0.38
+        audio.music.gain.value = musicEnabledRef.current ? 0.12 : 0.0001
+        audio.music.connect(audio.master)
         audio.master.connect(audio.context.destination)
       }
       if (audio.context.state === 'suspended') audio.context.resume()
       audio.unlocked = true
+      if (musicEnabledRef.current) startMusic()
       return audio.context
     }
 
@@ -396,6 +424,74 @@ function App() {
       playNoise({ gain: 0.28, duration: 0.38, delay: 0.08, lowpass: 5600 })
       playTone({ frequency: 95, endFrequency: 34, type: 'sawtooth', gain: 0.32, duration: 0.78 })
       playTone({ frequency: 55, endFrequency: 28, type: 'square', gain: 0.22, duration: 0.9, delay: 0.05 })
+    }
+
+    function playMusicTone({ frequency, start, duration = 0.12, gain = 0.08, type = 'square', pan = 0 }) {
+      if (!audio.context || !audio.music || !musicEnabledRef.current) return
+      const oscillator = audio.context.createOscillator()
+      const envelope = audio.context.createGain()
+      const stereo = audio.context.createStereoPanner?.()
+
+      oscillator.type = type
+      oscillator.frequency.setValueAtTime(frequency, start)
+      envelope.gain.setValueAtTime(0.0001, start)
+      envelope.gain.exponentialRampToValueAtTime(gain, start + 0.01)
+      envelope.gain.exponentialRampToValueAtTime(0.0001, start + duration)
+
+      oscillator.connect(envelope)
+      if (stereo) {
+        stereo.pan.value = pan
+        envelope.connect(stereo)
+        stereo.connect(audio.music)
+      } else {
+        envelope.connect(audio.music)
+      }
+      oscillator.start(start)
+      oscillator.stop(start + duration + 0.02)
+    }
+
+    function scheduleMusicLoop() {
+      if (!audio.context || !audio.music || !audio.musicPlaying || !musicEnabledRef.current) return
+
+      const beat = 0.18
+      const start = audio.context.currentTime + 0.04
+      const melody = [659, 784, 880, 784, 659, 523, 587, 659, 988, 880, 784, 659, 587, 659, 784, 988]
+      const bass = [165, 165, 196, 196, 220, 220, 196, 196, 147, 147, 165, 165, 196, 196, 247, 247]
+
+      melody.forEach((frequency, index) => {
+        const when = start + index * beat
+        playMusicTone({ frequency, start: when, duration: beat * 0.72, gain: index % 4 === 0 ? 0.075 : 0.055, type: 'square', pan: index % 2 ? 0.18 : -0.18 })
+        playMusicTone({ frequency: bass[index], start: when, duration: beat * 0.55, gain: 0.05, type: 'triangle', pan: -0.08 })
+        if (index % 4 === 2) playMusicTone({ frequency: frequency * 1.5, start: when + beat * 0.46, duration: beat * 0.34, gain: 0.025, type: 'square', pan: 0.26 })
+      })
+
+      audio.musicLoop = window.setTimeout(scheduleMusicLoop, beat * melody.length * 1000)
+    }
+
+    function startMusic() {
+      if (!audio.context || !audio.music || audio.musicPlaying || !musicEnabledRef.current) return
+      audio.musicPlaying = true
+      audio.music.gain.cancelScheduledValues(audio.context.currentTime)
+      audio.music.gain.setTargetAtTime(0.12, audio.context.currentTime, 0.08)
+      scheduleMusicLoop()
+    }
+
+    function stopMusic() {
+      if (audio.musicLoop) window.clearTimeout(audio.musicLoop)
+      audio.musicLoop = null
+      audio.musicPlaying = false
+      if (audio.context && audio.music) {
+        audio.music.gain.cancelScheduledValues(audio.context.currentTime)
+        audio.music.gain.setTargetAtTime(0.0001, audio.context.currentTime, 0.04)
+      }
+    }
+
+    musicControlsRef.current = {
+      start: () => {
+        getAudioContext()
+        startMusic()
+      },
+      stop: stopMusic,
     }
 
     function clearGameplayObjects() {
@@ -931,6 +1027,8 @@ function App() {
       cancelAnimationFrame(rafId)
       restartRef.current = null
       clearGameplayObjects()
+      musicControlsRef.current = null
+      stopMusic()
       window.removeEventListener('keydown', onKeyDown)
       window.removeEventListener('keyup', onKeyUp)
       window.removeEventListener('resize', onResize)
@@ -967,6 +1065,22 @@ function App() {
           <strong>{hud.altitude} m</strong>
         </div>
       </section>
+
+      <button
+        type="button"
+        className={`music-toggle ${musicEnabled ? 'is-on' : 'is-off'}`}
+        onClick={() => {
+          const nextMusicEnabled = !musicEnabled
+          musicEnabledRef.current = nextMusicEnabled
+          setMusicEnabled(nextMusicEnabled)
+          if (nextMusicEnabled) musicControlsRef.current?.start()
+          else musicControlsRef.current?.stop()
+        }}
+        aria-pressed={musicEnabled}
+        aria-label={musicEnabled ? 'Turn music off' : 'Turn music on'}
+      >
+        {musicEnabled ? '♫ Music on' : 'Music off'}
+      </button>
 
       <div ref={mountRef} className="viewport" aria-label="Stratus playable 3D flight game" />
       <div ref={popupsRef} className="popup-layer" aria-hidden="true" />
