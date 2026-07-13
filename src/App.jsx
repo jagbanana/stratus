@@ -211,6 +211,10 @@ function App() {
   const popupsRef = useRef(null)
   const restartRef = useRef(null)
   const musicControlsRef = useRef(null)
+  const mobileControlsRef = useRef({ stickX: 0, stickY: 0, boost: false, fire: false })
+  const tiltInputRef = useRef({ roll: 0, pitch: 0 })
+  const tiltBaselineRef = useRef({ beta: null, gamma: null })
+  const [tiltStatus, setTiltStatus] = useState('idle')
   const [hud, setHud] = useState({ score: 0, speed: 0, altitude: 0, hits: 0, crashed: false, started: false })
   const [highScores, setHighScores] = useState(() => readHighScores())
   const [initials, setInitials] = useState('ACE')
@@ -219,6 +223,7 @@ function App() {
   const musicEnabledRef = useRef(musicEnabled)
 
   const highScore = highScores[0]?.score || 0
+  const tiltEnabled = tiltStatus === 'active'
 
   useEffect(() => {
     musicEnabledRef.current = musicEnabled
@@ -229,6 +234,79 @@ function App() {
       musicControlsRef.current?.stop()
     }
   }, [musicEnabled])
+
+  useEffect(() => {
+    if (tiltStatus !== 'active') {
+      tiltInputRef.current = { roll: 0, pitch: 0 }
+      return undefined
+    }
+
+    function handleOrientation(event) {
+      const beta = Number(event.beta)
+      const gamma = Number(event.gamma)
+      if (!Number.isFinite(beta) || !Number.isFinite(gamma)) return
+
+      if (tiltBaselineRef.current.beta === null || tiltBaselineRef.current.gamma === null) {
+        tiltBaselineRef.current = { beta, gamma }
+      }
+
+      const betaDelta = beta - tiltBaselineRef.current.beta
+      const gammaDelta = gamma - tiltBaselineRef.current.gamma
+      tiltInputRef.current = {
+        roll: clamp(-gammaDelta / 26, -1, 1),
+        pitch: clamp(betaDelta / 28, -1, 1),
+      }
+    }
+
+    window.addEventListener('deviceorientation', handleOrientation)
+    return () => window.removeEventListener('deviceorientation', handleOrientation)
+  }, [tiltStatus])
+
+  async function enableTiltControls() {
+    tiltBaselineRef.current = { beta: null, gamma: null }
+    if (typeof window === 'undefined' || !('DeviceOrientationEvent' in window)) {
+      setTiltStatus('unavailable')
+      return
+    }
+
+    try {
+      const orientationEvent = window.DeviceOrientationEvent
+      if (typeof orientationEvent.requestPermission === 'function') {
+        const permission = await orientationEvent.requestPermission()
+        if (permission !== 'granted') {
+          setTiltStatus('denied')
+          return
+        }
+      }
+      setTiltStatus('active')
+    } catch {
+      setTiltStatus('denied')
+    }
+  }
+
+  function updateStickFromPointer(event) {
+    const rect = event.currentTarget.getBoundingClientRect()
+    const x = ((event.clientX - rect.left) / rect.width) * 2 - 1
+    const y = ((event.clientY - rect.top) / rect.height) * 2 - 1
+    const length = Math.hypot(x, y) || 1
+    const limit = Math.min(1, length)
+    mobileControlsRef.current.stickX = (x / length) * limit
+    mobileControlsRef.current.stickY = (y / length) * limit
+    event.currentTarget.style.setProperty('--stick-x', String(mobileControlsRef.current.stickX))
+    event.currentTarget.style.setProperty('--stick-y', String(mobileControlsRef.current.stickY))
+  }
+
+  function releaseStick(event) {
+    event.currentTarget.releasePointerCapture?.(event.pointerId)
+    mobileControlsRef.current.stickX = 0
+    mobileControlsRef.current.stickY = 0
+    event.currentTarget.style.setProperty('--stick-x', '0')
+    event.currentTarget.style.setProperty('--stick-y', '0')
+  }
+
+  function setTouchButton(button, pressed) {
+    mobileControlsRef.current[button] = pressed
+  }
 
   function submitHighScore(event) {
     event.preventDefault()
@@ -860,11 +938,13 @@ function App() {
         const right = keys.has('ArrowRight') || keys.has('KeyD')
         const up = keys.has('ArrowUp') || keys.has('KeyW')
         const down = keys.has('ArrowDown') || keys.has('KeyS')
-        const throttle = keys.has('ShiftLeft') || keys.has('ShiftRight')
-        const firing = keys.has('Space')
+        const mobile = mobileControlsRef.current
+        const tilt = tiltInputRef.current
+        const throttle = keys.has('ShiftLeft') || keys.has('ShiftRight') || mobile.boost
+        const firing = keys.has('Space') || mobile.fire
 
-        const rollInput = (left ? 1 : 0) + (right ? -1 : 0) - state.mouseX * 0.0015
-        const pitchInput = (down ? 1 : 0) + (up ? -1 : 0) - state.mouseY * 0.0017
+        const rollInput = (left ? 1 : 0) + (right ? -1 : 0) - state.mouseX * 0.0015 - mobile.stickX + tilt.roll
+        const pitchInput = (down ? 1 : 0) + (up ? -1 : 0) - state.mouseY * 0.0017 + mobile.stickY + tilt.pitch
 
         state.roll += rollInput * dt * 1.65
         state.roll = Math.atan2(Math.sin(state.roll), Math.cos(state.roll))
@@ -1052,8 +1132,58 @@ function App() {
       <div ref={mountRef} className="viewport" aria-label="Stratus playable 3D flight game" />
       <div ref={popupsRef} className="popup-layer" aria-hidden="true" />
 
+      <section className={`mobile-controls ${tiltEnabled ? 'tilt-mode' : 'stick-mode'}`} aria-label="Mobile flight controls">
+        {!tiltEnabled && (
+          <div
+            className="virtual-stick"
+            role="application"
+            aria-label="Virtual flight stick"
+            onPointerDown={(event) => {
+              event.currentTarget.setPointerCapture?.(event.pointerId)
+              updateStickFromPointer(event)
+            }}
+            onPointerMove={(event) => {
+              if (event.currentTarget.hasPointerCapture?.(event.pointerId)) updateStickFromPointer(event)
+            }}
+            onPointerUp={releaseStick}
+            onPointerCancel={releaseStick}
+          >
+            <span className="stick-knob" aria-hidden="true" />
+          </div>
+        )}
+
+        <button
+          type="button"
+          className="tilt-enable"
+          onClick={enableTiltControls}
+        >
+          {tiltEnabled ? 'Tilt active' : tiltStatus === 'denied' ? 'Tilt denied · use stick' : tiltStatus === 'unavailable' ? 'Tilt unavailable' : 'Enable tilt'}
+        </button>
+
+        <div className="touch-actions">
+          <button
+            type="button"
+            className="touch-button shoot-button"
+            onPointerDown={(event) => { event.currentTarget.setPointerCapture?.(event.pointerId); setTouchButton('fire', true) }}
+            onPointerUp={(event) => { event.currentTarget.releasePointerCapture?.(event.pointerId); setTouchButton('fire', false) }}
+            onPointerCancel={() => setTouchButton('fire', false)}
+          >
+            Shoot
+          </button>
+          <button
+            type="button"
+            className="touch-button boost-button"
+            onPointerDown={(event) => { event.currentTarget.setPointerCapture?.(event.pointerId); setTouchButton('boost', true) }}
+            onPointerUp={(event) => { event.currentTarget.releasePointerCapture?.(event.pointerId); setTouchButton('boost', false) }}
+            onPointerCancel={() => setTouchButton('boost', false)}
+          >
+            Boost
+          </button>
+        </div>
+      </section>
+
       <section className="hud controls">
-        <p><strong>Stick:</strong> W nose down / S nose up · <strong>Bank:</strong> A/D or arrows · <strong>Boost:</strong> Shift · <strong>Guns:</strong> Space · <strong>Mouse:</strong> click window · <strong>Restart:</strong> R/Enter</p>
+        <p><strong>Stick:</strong> W nose down / S nose up · <strong>Bank:</strong> A/D or arrows · <strong>Mobile:</strong> tilt or virtual stick · <strong>Boost:</strong> Shift/button · <strong>Guns:</strong> Space/button · <strong>Restart:</strong> R/Enter</p>
         <p className="music-credit">Music: <a href="https://github.com/OpenSourceMusic/This-Place-Is-So-Lonely" target="_blank" rel="noreferrer">This Place Is So Lonely</a> by Josh Penn-Pierson · <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noreferrer">CC BY 4.0</a></p>
       </section>
 
