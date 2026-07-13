@@ -314,3 +314,20 @@ strong {
   outline: 2px solid #16f7ff;
   outline-offset: 3px;
 }
+
+.music-credit {
+  margin-top: 5px;
+  color: rgba(248, 244, 255, 0.62);
+  font-size: 0.74rem;
+}
+
+.music-credit a {
+  color: #16f7ff;
+  text-decoration: none;
+  text-shadow: 0 0 10px rgba(22, 247, 255, 0.6);
+}
+
+.music-credit a:hover,
+.music-credit a:focus-visible {
+  color: #ffb000;
+}

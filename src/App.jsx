@@ -6,6 +6,7 @@ const clamp = (value, min, max) => Math.max(min, Math.min(max, value))
 const lerp = (a, b, t) => a + (b - a) * t
 const HIGH_SCORE_COOKIE = 'stratus_high_scores'
 const MUSIC_PREF_KEY = 'stratus_music_enabled'
+const MUSIC_TRACK_URL = '/audio/this-place-is-so-lonely.mp3'
 
 function readHighScores() {
   if (typeof document === 'undefined') return []
@@ -325,7 +326,7 @@ function App() {
     const cameraViewProjection = new THREE.Matrix4()
     const cameraFrustum = new THREE.Frustum()
     const targetSphere = new THREE.Sphere()
-    const audio = { context: null, master: null, music: null, musicLoop: null, musicPlaying: false, unlocked: false }
+    const audio = { context: null, master: null, track: null, musicPlaying: false, unlocked: false }
 
     function getAudioContext() {
       const AudioContext = window.AudioContext || window.webkitAudioContext
@@ -333,10 +334,7 @@ function App() {
       if (!audio.context) {
         audio.context = new AudioContext()
         audio.master = audio.context.createGain()
-        audio.music = audio.context.createGain()
         audio.master.gain.value = 0.38
-        audio.music.gain.value = musicEnabledRef.current ? 0.12 : 0.0001
-        audio.music.connect(audio.master)
         audio.master.connect(audio.context.destination)
       }
       if (audio.context.state === 'suspended') audio.context.resume()
@@ -426,63 +424,28 @@ function App() {
       playTone({ frequency: 55, endFrequency: 28, type: 'square', gain: 0.22, duration: 0.9, delay: 0.05 })
     }
 
-    function playMusicTone({ frequency, start, duration = 0.12, gain = 0.08, type = 'square', pan = 0 }) {
-      if (!audio.context || !audio.music || !musicEnabledRef.current) return
-      const oscillator = audio.context.createOscillator()
-      const envelope = audio.context.createGain()
-      const stereo = audio.context.createStereoPanner?.()
-
-      oscillator.type = type
-      oscillator.frequency.setValueAtTime(frequency, start)
-      envelope.gain.setValueAtTime(0.0001, start)
-      envelope.gain.exponentialRampToValueAtTime(gain, start + 0.01)
-      envelope.gain.exponentialRampToValueAtTime(0.0001, start + duration)
-
-      oscillator.connect(envelope)
-      if (stereo) {
-        stereo.pan.value = pan
-        envelope.connect(stereo)
-        stereo.connect(audio.music)
-      } else {
-        envelope.connect(audio.music)
-      }
-      oscillator.start(start)
-      oscillator.stop(start + duration + 0.02)
-    }
-
-    function scheduleMusicLoop() {
-      if (!audio.context || !audio.music || !audio.musicPlaying || !musicEnabledRef.current) return
-
-      const beat = 0.18
-      const start = audio.context.currentTime + 0.04
-      const melody = [659, 784, 880, 784, 659, 523, 587, 659, 988, 880, 784, 659, 587, 659, 784, 988]
-      const bass = [165, 165, 196, 196, 220, 220, 196, 196, 147, 147, 165, 165, 196, 196, 247, 247]
-
-      melody.forEach((frequency, index) => {
-        const when = start + index * beat
-        playMusicTone({ frequency, start: when, duration: beat * 0.72, gain: index % 4 === 0 ? 0.075 : 0.055, type: 'square', pan: index % 2 ? 0.18 : -0.18 })
-        playMusicTone({ frequency: bass[index], start: when, duration: beat * 0.55, gain: 0.05, type: 'triangle', pan: -0.08 })
-        if (index % 4 === 2) playMusicTone({ frequency: frequency * 1.5, start: when + beat * 0.46, duration: beat * 0.34, gain: 0.025, type: 'square', pan: 0.26 })
-      })
-
-      audio.musicLoop = window.setTimeout(scheduleMusicLoop, beat * melody.length * 1000)
-    }
-
     function startMusic() {
-      if (!audio.context || !audio.music || audio.musicPlaying || !musicEnabledRef.current) return
+      if (!musicEnabledRef.current || audio.musicPlaying) return
+      if (!audio.track) {
+        audio.track = new Audio(MUSIC_TRACK_URL)
+        audio.track.loop = true
+        audio.track.preload = 'auto'
+        audio.track.volume = 0.28
+      }
       audio.musicPlaying = true
-      audio.music.gain.cancelScheduledValues(audio.context.currentTime)
-      audio.music.gain.setTargetAtTime(0.12, audio.context.currentTime, 0.08)
-      scheduleMusicLoop()
+      audio.track.currentTime = audio.track.currentTime || 0
+      const playPromise = audio.track.play()
+      if (playPromise?.catch) {
+        playPromise.catch(() => {
+          audio.musicPlaying = false
+        })
+      }
     }
 
     function stopMusic() {
-      if (audio.musicLoop) window.clearTimeout(audio.musicLoop)
-      audio.musicLoop = null
       audio.musicPlaying = false
-      if (audio.context && audio.music) {
-        audio.music.gain.cancelScheduledValues(audio.context.currentTime)
-        audio.music.gain.setTargetAtTime(0.0001, audio.context.currentTime, 0.04)
+      if (audio.track) {
+        audio.track.pause()
       }
     }
 
@@ -1034,6 +997,10 @@ function App() {
       window.removeEventListener('resize', onResize)
       window.removeEventListener('mousemove', onMouseMove)
       renderer.domElement.removeEventListener('click', onClick)
+      if (audio.track) {
+        audio.track.pause()
+        audio.track.src = ''
+      }
       if (audio.context) audio.context.close()
       if (renderer.domElement.parentElement === mount) mount.removeChild(renderer.domElement)
       renderer.dispose()
@@ -1087,6 +1054,7 @@ function App() {
 
       <section className="hud controls">
         <p><strong>Stick:</strong> W nose down / S nose up · <strong>Bank:</strong> A/D or arrows · <strong>Boost:</strong> Shift · <strong>Guns:</strong> Space · <strong>Mouse:</strong> click window · <strong>Restart:</strong> R/Enter</p>
+        <p className="music-credit">Music: <a href="https://github.com/OpenSourceMusic/This-Place-Is-So-Lonely" target="_blank" rel="noreferrer">This Place Is So Lonely</a> by Josh Penn-Pierson · <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noreferrer">CC BY 4.0</a></p>
       </section>
 
       {hud.crashed && (
