@@ -8,6 +8,13 @@ const HIGH_SCORE_COOKIE = 'stratus_high_scores'
 const MUSIC_PREF_KEY = 'stratus_music_enabled'
 const MUSIC_TRACK_URL = '/audio/this-place-is-so-lonely.mp3'
 
+function detectTouchLikely() {
+  if (typeof window === 'undefined' || typeof navigator === 'undefined') return false
+  const coarsePointer = window.matchMedia?.('(hover: none), (pointer: coarse)')?.matches
+  const compactScreen = Math.min(window.innerWidth, window.innerHeight) <= 820
+  return Boolean(coarsePointer || navigator.maxTouchPoints > 0 || compactScreen)
+}
+
 function readHighScores() {
   if (typeof document === 'undefined') return []
   const cookie = document.cookie
@@ -212,9 +219,8 @@ function App() {
   const restartRef = useRef(null)
   const musicControlsRef = useRef(null)
   const mobileControlsRef = useRef({ stickX: 0, stickY: 0, boost: false, fire: false })
-  const tiltInputRef = useRef({ roll: 0, pitch: 0 })
-  const tiltBaselineRef = useRef({ beta: null, gamma: null })
-  const [tiltStatus, setTiltStatus] = useState('idle')
+  const [inputMode, setInputMode] = useState('auto')
+  const [touchLikely, setTouchLikely] = useState(() => detectTouchLikely())
   const [hud, setHud] = useState({ score: 0, speed: 0, altitude: 0, hits: 0, crashed: false, started: false })
   const [highScores, setHighScores] = useState(() => readHighScores())
   const [initials, setInitials] = useState('ACE')
@@ -223,7 +229,7 @@ function App() {
   const musicEnabledRef = useRef(musicEnabled)
 
   const highScore = highScores[0]?.score || 0
-  const tiltEnabled = tiltStatus === 'active'
+  const showTouchControls = hud.started && !hud.crashed && (inputMode === 'touch' || (inputMode === 'auto' && touchLikely))
 
   useEffect(() => {
     musicEnabledRef.current = musicEnabled
@@ -236,63 +242,16 @@ function App() {
   }, [musicEnabled])
 
   useEffect(() => {
-    if (tiltStatus !== 'active') {
-      tiltInputRef.current = { roll: 0, pitch: 0 }
-      return undefined
+    function updateTouchDetection() {
+      setTouchLikely(detectTouchLikely())
     }
+    updateTouchDetection()
+    window.addEventListener('resize', updateTouchDetection)
+    return () => window.removeEventListener('resize', updateTouchDetection)
+  }, [])
 
-    function handleOrientation(event) {
-      const beta = Number(event.beta)
-      const gamma = Number(event.gamma)
-      if (!Number.isFinite(beta) || !Number.isFinite(gamma)) return
-
-      if (tiltBaselineRef.current.beta === null || tiltBaselineRef.current.gamma === null) {
-        tiltBaselineRef.current = { beta, gamma }
-      }
-
-      const betaDelta = beta - tiltBaselineRef.current.beta
-      const gammaDelta = gamma - tiltBaselineRef.current.gamma
-      tiltInputRef.current = {
-        roll: clamp(-gammaDelta / 26, -1, 1),
-        pitch: clamp(betaDelta / 28, -1, 1),
-      }
-    }
-
-    window.addEventListener('deviceorientation', handleOrientation)
-    return () => window.removeEventListener('deviceorientation', handleOrientation)
-  }, [tiltStatus])
-
-  async function enableTiltControls() {
-    tiltBaselineRef.current = { beta: null, gamma: null }
-    if (typeof window === 'undefined' || !('DeviceOrientationEvent' in window)) {
-      setTiltStatus('unavailable')
-      return
-    }
-
-    try {
-      const orientationEvent = window.DeviceOrientationEvent
-      if (typeof orientationEvent.requestPermission === 'function') {
-        const permission = await orientationEvent.requestPermission()
-        if (permission !== 'granted') {
-          setTiltStatus('denied')
-          return
-        }
-      }
-      setTiltStatus('active')
-    } catch {
-      setTiltStatus('denied')
-    }
-  }
-
-  function toggleTiltControls() {
-    if (tiltStatus === 'active') {
-      setTiltStatus('idle')
-      tiltBaselineRef.current = { beta: null, gamma: null }
-      tiltInputRef.current = { roll: 0, pitch: 0 }
-      return
-    }
-    enableTiltControls()
-  }
+  // Tilt/device-orientation controls are intentionally disabled for now.
+  // They need more tuning than is polite to inflict on thumbs and furniture.
 
   function updateStickFromPointer(event) {
     const rect = event.currentTarget.getBoundingClientRect()
@@ -396,6 +355,7 @@ function App() {
       fireCooldown: 0,
       crashModalDelay: 0,
       countdown: 0,
+      countdownCueIndex: 0,
       mouseX: 0,
       mouseY: 0,
     }
@@ -513,6 +473,18 @@ function App() {
       playNoise({ gain: 0.28, duration: 0.38, delay: 0.08, lowpass: 5600 })
       playTone({ frequency: 95, endFrequency: 34, type: 'sawtooth', gain: 0.32, duration: 0.78 })
       playTone({ frequency: 55, endFrequency: 28, type: 'square', gain: 0.22, duration: 0.9, delay: 0.05 })
+    }
+
+    function playCountdownSound(label) {
+      if (label === 'GO!') {
+        playTone({ frequency: 660, endFrequency: 1320, type: 'square', gain: 0.2, duration: 0.18 })
+        playTone({ frequency: 990, endFrequency: 1760, type: 'triangle', gain: 0.16, duration: 0.24, delay: 0.08 })
+        playNoise({ gain: 0.08, duration: 0.16, delay: 0.02, lowpass: 5200 })
+        return
+      }
+      const base = label === '3' ? 330 : label === '2' ? 392 : 494
+      playTone({ frequency: base, endFrequency: base * 1.18, type: 'square', gain: 0.16, duration: 0.13 })
+      playTone({ frequency: base / 2, endFrequency: base / 2, type: 'triangle', gain: 0.08, duration: 0.12 })
     }
 
     function startMusic() {
@@ -666,6 +638,7 @@ function App() {
       state.fireCooldown = 0
       state.crashModalDelay = 0
       state.countdown = 3.7
+      state.countdownCueIndex = 0
       state.started = true
       state.crashed = false
       state.lastTime = performance.now()
@@ -1054,6 +1027,16 @@ function App() {
 
         if (countingDown) {
           state.countdown = Math.max(0, state.countdown - dt)
+          const countdownCues = [
+            { at: 3, label: '3' },
+            { at: 2, label: '2' },
+            { at: 1, label: '1' },
+            { at: 0.05, label: 'GO!' },
+          ]
+          while (state.countdownCueIndex < countdownCues.length && state.countdown <= countdownCues[state.countdownCueIndex].at) {
+            playCountdownSound(countdownCues[state.countdownCueIndex].label)
+            state.countdownCueIndex += 1
+          }
           previousPlanePosition.copy(state.position)
           state.speed = lerp(state.speed, 48, 1 - Math.pow(0.001, dt))
           const forward = getForwardVector(true)
@@ -1064,11 +1047,10 @@ function App() {
           const right = keys.has('ArrowRight') || keys.has('KeyD')
           const up = keys.has('ArrowUp') || keys.has('KeyW')
           const down = keys.has('ArrowDown') || keys.has('KeyS')
-          const tilt = tiltInputRef.current
           const firing = keys.has('Space') || mobile.fire
 
-          const rollInput = (left ? 1 : 0) + (right ? -1 : 0) - state.mouseX * 0.0015 - mobile.stickX + tilt.roll
-          const pitchInput = (down ? 1 : 0) + (up ? -1 : 0) - state.mouseY * 0.0017 + mobile.stickY + tilt.pitch
+          const rollInput = (left ? 1 : 0) + (right ? -1 : 0) - state.mouseX * 0.0015 - mobile.stickX
+          const pitchInput = (down ? 1 : 0) + (up ? -1 : 0) - state.mouseY * 0.0017 + mobile.stickY
 
           state.roll += rollInput * dt * 1.65
           state.roll = Math.atan2(Math.sin(state.roll), Math.cos(state.roll))
@@ -1154,7 +1136,7 @@ function App() {
       getAudioContext()
       if (!isTextEntry && (event.code === 'Enter' || event.code === 'KeyR')) resetGame()
       if (!isTextEntry) keys.add(event.code)
-      if (!isTextEntry && !state.started && ['KeyW', 'ArrowUp', 'Space'].includes(event.code)) resetGame()
+      if (!isTextEntry && !state.started && ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space', 'Enter'].includes(event.code)) resetGame()
     }
 
     function onKeyUp(event) {
@@ -1189,7 +1171,7 @@ function App() {
     renderer.domElement.addEventListener('click', onClick)
 
     setupSpeedLines()
-    resetGame()
+    setHud({ score: 0, speed: state.speed, altitude: state.position.y, hits: 0, crashed: false, started: false })
     rafId = requestAnimationFrame(animate)
 
     return () => {
@@ -1264,34 +1246,23 @@ function App() {
       <div ref={mountRef} className="viewport" aria-label="Stratus playable 3D flight game" />
       <div ref={popupsRef} className="popup-layer" aria-hidden="true" />
 
-      <section className={`mobile-controls ${tiltEnabled ? 'tilt-mode' : 'stick-mode'}`} aria-label="Mobile flight controls">
-        {!tiltEnabled && (
-          <div
-            className="virtual-stick"
-            role="application"
-            aria-label="Virtual flight stick"
-            onPointerDown={(event) => {
-              event.currentTarget.setPointerCapture?.(event.pointerId)
-              updateStickFromPointer(event)
-            }}
-            onPointerMove={(event) => {
-              if (event.currentTarget.hasPointerCapture?.(event.pointerId)) updateStickFromPointer(event)
-            }}
-            onPointerUp={releaseStick}
-            onPointerCancel={releaseStick}
-          >
-            <span className="stick-knob" aria-hidden="true" />
-          </div>
-        )}
-
-        <button
-          type="button"
-          className="tilt-enable"
-          onClick={toggleTiltControls}
-          aria-pressed={tiltEnabled}
+      <section className={`mobile-controls ${showTouchControls ? 'is-visible' : ''}`} aria-label="Mobile flight controls">
+        <div
+          className="virtual-stick"
+          role="application"
+          aria-label="Virtual flight stick"
+          onPointerDown={(event) => {
+            event.currentTarget.setPointerCapture?.(event.pointerId)
+            updateStickFromPointer(event)
+          }}
+          onPointerMove={(event) => {
+            if (event.currentTarget.hasPointerCapture?.(event.pointerId)) updateStickFromPointer(event)
+          }}
+          onPointerUp={releaseStick}
+          onPointerCancel={releaseStick}
         >
-          {tiltEnabled ? 'Tilt off' : tiltStatus === 'denied' ? 'Tilt denied · use stick' : tiltStatus === 'unavailable' ? 'Tilt unavailable' : 'Enable tilt'}
-        </button>
+          <span className="stick-knob" aria-hidden="true" />
+        </div>
 
         <div className="touch-actions">
           <button
@@ -1315,10 +1286,26 @@ function App() {
         </div>
       </section>
 
-      <section className="hud controls">
-        <p><strong>Stick:</strong> W nose down / S nose up · <strong>Bank:</strong> A/D or arrows · <strong>Mobile:</strong> tilt or virtual stick · <strong>Boost:</strong> Shift/button · <strong>Guns:</strong> Space/button · <strong>Restart:</strong> R/Enter</p>
-        <p className="music-credit">Music: <a href="https://github.com/OpenSourceMusic/This-Place-Is-So-Lonely" target="_blank" rel="noreferrer">This Place Is So Lonely</a> by Josh Penn-Pierson · <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noreferrer">CC BY 4.0</a></p>
-      </section>
+      {!hud.started && (
+        <section className="start-screen" aria-label="Start Stratus">
+          <div className="start-card">
+            <span className="label">stratus flight check</span>
+            <h1>Ready for launch?</h1>
+            <p className="start-copy">Pop targets, thread the neon city, avoid converting the aircraft into modern art.</p>
+            <div className="control-legend">
+              <p><strong>Keyboard:</strong> W/S pitch · A/D or arrows bank · Shift boost · Space guns · R restart</p>
+              <p><strong>Touch:</strong> left stick steers · Shoot and Boost buttons on the right</p>
+            </div>
+            <div className="input-choice" aria-label="Control mode">
+              <button type="button" className={inputMode === 'auto' ? 'selected' : ''} onClick={() => setInputMode('auto')}>Auto {touchLikely ? 'touch' : 'keyboard'}</button>
+              <button type="button" className={inputMode === 'touch' ? 'selected' : ''} onClick={() => setInputMode('touch')}>Touch</button>
+              <button type="button" className={inputMode === 'keyboard' ? 'selected' : ''} onClick={() => setInputMode('keyboard')}>Keyboard</button>
+            </div>
+            <button type="button" className="start-button" onClick={() => restartRef.current?.()}>Press to start</button>
+            <p className="music-credit">Music: <a href="https://github.com/OpenSourceMusic/This-Place-Is-So-Lonely" target="_blank" rel="noreferrer">This Place Is So Lonely</a> by Josh Penn-Pierson · <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noreferrer">CC BY 4.0</a></p>
+          </div>
+        </section>
+      )}
 
       {hud.crashed && (
         <div className="modal">
