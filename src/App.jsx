@@ -284,6 +284,16 @@ function App() {
     }
   }
 
+  function toggleTiltControls() {
+    if (tiltStatus === 'active') {
+      setTiltStatus('idle')
+      tiltBaselineRef.current = { beta: null, gamma: null }
+      tiltInputRef.current = { roll: 0, pitch: 0 }
+      return
+    }
+    enableTiltControls()
+  }
+
   function updateStickFromPointer(event) {
     const rect = event.currentTarget.getBoundingClientRect()
     const x = ((event.clientX - rect.left) / rect.width) * 2 - 1
@@ -385,6 +395,7 @@ function App() {
       hudTime: 0,
       fireCooldown: 0,
       crashModalDelay: 0,
+      countdown: 0,
       mouseX: 0,
       mouseY: 0,
     }
@@ -396,6 +407,8 @@ function App() {
     const explosions = []
     const crashPieces = []
     const popups = []
+    const countdownMarkers = []
+    const speedLines = []
     const spacing = 34
     const worldUp = new THREE.Vector3(0, 1, 0)
     const visualTarget = new THREE.Vector3()
@@ -535,12 +548,110 @@ function App() {
       stop: stopMusic,
     }
 
+    function makeTextTexture(text, color = '#ffffff') {
+      const canvas = document.createElement('canvas')
+      canvas.width = 512
+      canvas.height = 256
+      const context = canvas.getContext('2d')
+      context.clearRect(0, 0, canvas.width, canvas.height)
+      context.font = text === 'GO!' ? '900 112px Arial Black, Impact, sans-serif' : '900 164px Arial Black, Impact, sans-serif'
+      context.textAlign = 'center'
+      context.textBaseline = 'middle'
+      context.lineWidth = 16
+      context.strokeStyle = '#130722'
+      context.shadowColor = color
+      context.shadowBlur = 34
+      context.strokeText(text, 256, 130)
+      context.fillStyle = color
+      context.fillText(text, 256, 130)
+      const texture = new THREE.CanvasTexture(canvas)
+      texture.colorSpace = THREE.SRGBColorSpace
+      return texture
+    }
+
+    function setupCountdownMarkers() {
+      countdownMarkers.splice(0).forEach((marker) => {
+        effectGroup.remove(marker.mesh)
+        marker.mesh.material.map.dispose()
+        marker.mesh.material.dispose()
+      })
+      const markers = [
+        { text: '3', distance: 54, color: '#16f7ff' },
+        { text: '2', distance: 100, color: '#ff2bd6' },
+        { text: '1', distance: 146, color: '#ffb000' },
+        { text: 'GO!', distance: 194, color: '#ffffff' },
+      ]
+      const forward = getForwardVector(false)
+      markers.forEach((marker) => {
+        const material = new THREE.SpriteMaterial({ map: makeTextTexture(marker.text, marker.color), transparent: true, depthWrite: false })
+        const sprite = new THREE.Sprite(material)
+        sprite.position.copy(state.position).addScaledVector(forward, marker.distance)
+        sprite.position.y += marker.text === 'GO!' ? 4 : 1
+        sprite.scale.set(marker.text === 'GO!' ? 34 : 24, marker.text === 'GO!' ? 17 : 12, 1)
+        effectGroup.add(sprite)
+        countdownMarkers.push({ mesh: sprite, distance: marker.distance })
+      })
+    }
+
+    function updateCountdownMarkers() {
+      const forward = getForwardVector(false)
+      countdownMarkers.forEach((marker) => {
+        const toMarker = tempVector.copy(marker.mesh.position).sub(state.position)
+        const ahead = toMarker.dot(forward)
+        marker.mesh.material.opacity = clamp((ahead + 10) / 44, 0, 1)
+        marker.mesh.scale.multiplyScalar(ahead < 12 ? 1.018 : 1)
+      })
+    }
+
+    function setupSpeedLines() {
+      speedLines.splice(0).forEach((line) => effectGroup.remove(line.mesh))
+      for (let i = 0; i < 72; i += 1) {
+        const geometry = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3(0, 0, -1)])
+        const material = new THREE.LineBasicMaterial({ color: i % 3 === 0 ? 0xff2bd6 : i % 3 === 1 ? 0x16f7ff : 0xffb000, transparent: true, opacity: 0 })
+        const mesh = new THREE.Line(geometry, material)
+        effectGroup.add(mesh)
+        speedLines.push({ mesh, offset: new THREE.Vector3(), seed: Math.random() })
+      }
+    }
+
+    function resetSpeedLine(line, boostFactor = 1) {
+      const forward = getForwardVector(false)
+      const right = getRightVector()
+      const up = worldUp
+      const lateral = lerp(-58, 58, Math.random())
+      const vertical = lerp(-24, 34, Math.random())
+      const ahead = lerp(44, 180 + boostFactor * 35, Math.random())
+      line.offset.copy(state.position).addScaledVector(forward, ahead).addScaledVector(right, lateral).addScaledVector(up, vertical)
+    }
+
+    function updateSpeedLines(dt, boostActive = false) {
+      const forward = getForwardVector(false)
+      const boostFactor = boostActive ? 1.9 : 1
+      const activeCount = boostActive ? speedLines.length : 42
+      speedLines.forEach((line, index) => {
+        if (line.offset.lengthSq() === 0 || index >= activeCount) resetSpeedLine(line, boostFactor)
+        const extraSpeed = (boostActive ? 108 : 42) + line.seed * 38
+        line.offset.addScaledVector(forward, -(state.speed + extraSpeed) * dt)
+        const toLine = tempVector.copy(line.offset).sub(state.position)
+        if (toLine.dot(forward) < -26 || toLine.lengthSq() > 230 * 230) resetSpeedLine(line, boostFactor)
+        const start = line.offset
+        const end = line.offset.clone().addScaledVector(forward, -(boostActive ? 13 : 7) * (0.7 + line.seed))
+        line.mesh.geometry.setFromPoints([start, end])
+        line.mesh.material.opacity = index < activeCount ? (boostActive ? 0.72 : 0.34) : 0
+      })
+    }
+
     function clearGameplayObjects() {
       bullets.splice(0).forEach((bullet) => effectGroup.remove(bullet.mesh))
       targets.splice(0).forEach((target) => targetGroup.remove(target.mesh))
       explosions.splice(0).forEach((particle) => effectGroup.remove(particle.mesh))
       crashPieces.splice(0).forEach((piece) => effectGroup.remove(piece.mesh))
       popups.splice(0).forEach((popup) => popup.element.remove())
+      countdownMarkers.splice(0).forEach((marker) => {
+        effectGroup.remove(marker.mesh)
+        marker.mesh.material.map.dispose()
+        marker.mesh.material.dispose()
+      })
     }
 
     function resetGame() {
@@ -554,11 +665,13 @@ function App() {
       state.hits = 0
       state.fireCooldown = 0
       state.crashModalDelay = 0
+      state.countdown = 3.7
       state.started = true
       state.crashed = false
       state.lastTime = performance.now()
       plane.visible = true
       setScoreSubmitted(false)
+      setupCountdownMarkers()
       setHud({ score: 0, speed: state.speed, altitude: state.position.y, hits: 0, crashed: false, started: true })
     }
 
@@ -933,56 +1046,68 @@ function App() {
       maintainCity()
       maintainTargets()
 
+      const mobile = mobileControlsRef.current
+      const throttle = keys.has('ShiftLeft') || keys.has('ShiftRight') || mobile.boost
+
       if (state.started && !state.crashed) {
-        const left = keys.has('ArrowLeft') || keys.has('KeyA')
-        const right = keys.has('ArrowRight') || keys.has('KeyD')
-        const up = keys.has('ArrowUp') || keys.has('KeyW')
-        const down = keys.has('ArrowDown') || keys.has('KeyS')
-        const mobile = mobileControlsRef.current
-        const tilt = tiltInputRef.current
-        const throttle = keys.has('ShiftLeft') || keys.has('ShiftRight') || mobile.boost
-        const firing = keys.has('Space') || mobile.fire
+        const countingDown = state.countdown > 0
 
-        const rollInput = (left ? 1 : 0) + (right ? -1 : 0) - state.mouseX * 0.0015 - mobile.stickX + tilt.roll
-        const pitchInput = (down ? 1 : 0) + (up ? -1 : 0) - state.mouseY * 0.0017 + mobile.stickY + tilt.pitch
+        if (countingDown) {
+          state.countdown = Math.max(0, state.countdown - dt)
+          previousPlanePosition.copy(state.position)
+          state.speed = lerp(state.speed, 48, 1 - Math.pow(0.001, dt))
+          const forward = getForwardVector(true)
+          state.position.addScaledVector(forward, state.speed * dt)
+          updateCountdownMarkers()
+        } else {
+          const left = keys.has('ArrowLeft') || keys.has('KeyA')
+          const right = keys.has('ArrowRight') || keys.has('KeyD')
+          const up = keys.has('ArrowUp') || keys.has('KeyW')
+          const down = keys.has('ArrowDown') || keys.has('KeyS')
+          const tilt = tiltInputRef.current
+          const firing = keys.has('Space') || mobile.fire
 
-        state.roll += rollInput * dt * 1.65
-        state.roll = Math.atan2(Math.sin(state.roll), Math.cos(state.roll))
+          const rollInput = (left ? 1 : 0) + (right ? -1 : 0) - state.mouseX * 0.0015 - mobile.stickX + tilt.roll
+          const pitchInput = (down ? 1 : 0) + (up ? -1 : 0) - state.mouseY * 0.0017 + mobile.stickY + tilt.pitch
 
-        const bankAmount = Math.abs(Math.sin(state.roll))
-        const uprightLift = Math.max(0, Math.cos(state.roll))
-        const coordinatedTurn = -Math.sin(state.roll) * (0.72 + state.speed / 88)
-        state.yaw += coordinatedTurn * dt
+          state.roll += rollInput * dt * 1.65
+          state.roll = Math.atan2(Math.sin(state.roll), Math.cos(state.roll))
 
-        const rollNoseDrop = (1 - uprightLift) * 0.5 + bankAmount * 0.16
-        state.pitch = clamp(state.pitch + pitchInput * dt * 0.86 - rollNoseDrop * dt, -0.58, 0.5)
-        state.speed = clamp(state.speed + (throttle ? 18 : 1.8 + rollNoseDrop * 8) * dt, 32, 76)
+          const bankAmount = Math.abs(Math.sin(state.roll))
+          const uprightLift = Math.max(0, Math.cos(state.roll))
+          const coordinatedTurn = -Math.sin(state.roll) * (0.72 + state.speed / 88)
+          state.yaw += coordinatedTurn * dt
 
-        previousPlanePosition.copy(state.position)
-        const forward = getForwardVector(true)
-        state.position.addScaledVector(forward, state.speed * dt)
-        state.position.y -= ((1 - uprightLift) * 9 + bankAmount * 2.4) * dt
-        state.position.y = Math.min(state.position.y, 74)
-        if (state.position.y > 69) state.pitch -= dt * 0.32
+          const rollNoseDrop = (1 - uprightLift) * 0.5 + bankAmount * 0.16
+          state.pitch = clamp(state.pitch + pitchInput * dt * 0.86 - rollNoseDrop * dt, -0.58, 0.5)
+          state.speed = clamp(state.speed + (throttle ? 18 : 1.8 + rollNoseDrop * 8) * dt, 32, 76)
 
-        state.fireCooldown = Math.max(0, state.fireCooldown - dt)
-        if (firing && state.fireCooldown <= 0) {
-          fireGuns()
-          state.fireCooldown = 0.085
-        }
+          previousPlanePosition.copy(state.position)
+          const forward = getForwardVector(true)
+          state.position.addScaledVector(forward, state.speed * dt)
+          state.position.y -= ((1 - uprightLift) * 9 + bankAmount * 2.4) * dt
+          state.position.y = Math.min(state.position.y, 74)
+          if (state.position.y > 69) state.pitch -= dt * 0.32
 
-        checkTargetFlyThrough()
+          state.fireCooldown = Math.max(0, state.fireCooldown - dt)
+          if (firing && state.fireCooldown <= 0) {
+            fireGuns()
+            state.fireCooldown = 0.085
+          }
 
-        state.score += dt * state.speed * 0.55
-        state.mouseX *= 0.82
-        state.mouseY *= 0.82
+          checkTargetFlyThrough()
 
-        if (checkCrash()) {
-          updatePlaneVisual()
-          state.crashed = true
-          state.crashModalDelay = 1.25
-          createCrashEffect()
-          setHud({ score: Math.floor(state.score), speed: Math.round(state.speed), altitude: Math.round(state.position.y), hits: state.hits, crashed: false, started: true })
+          state.score += dt * state.speed * 0.55
+          state.mouseX *= 0.82
+          state.mouseY *= 0.82
+
+          if (checkCrash()) {
+            updatePlaneVisual()
+            state.crashed = true
+            state.crashModalDelay = 1.25
+            createCrashEffect()
+            setHud({ score: Math.floor(state.score), speed: Math.round(state.speed), altitude: Math.round(state.position.y), hits: state.hits, crashed: false, started: true })
+          }
         }
       }
 
@@ -1003,6 +1128,7 @@ function App() {
       grid.position.x = Math.round(state.position.x / spacing) * spacing
       grid.position.z = Math.round(state.position.z / spacing) * spacing
 
+      updateSpeedLines(dt, throttle && state.countdown <= 0 && !state.crashed)
       updateScorePopups(dt)
       renderer.render(scene, camera)
 
@@ -1062,6 +1188,7 @@ function App() {
     window.addEventListener('mousemove', onMouseMove)
     renderer.domElement.addEventListener('click', onClick)
 
+    setupSpeedLines()
     resetGame()
     rafId = requestAnimationFrame(animate)
 
@@ -1077,6 +1204,11 @@ function App() {
       window.removeEventListener('resize', onResize)
       window.removeEventListener('mousemove', onMouseMove)
       renderer.domElement.removeEventListener('click', onClick)
+      speedLines.splice(0).forEach((line) => {
+        effectGroup.remove(line.mesh)
+        line.mesh.geometry.dispose()
+        line.mesh.material.dispose()
+      })
       if (audio.track) {
         audio.track.pause()
         audio.track.src = ''
@@ -1155,9 +1287,10 @@ function App() {
         <button
           type="button"
           className="tilt-enable"
-          onClick={enableTiltControls}
+          onClick={toggleTiltControls}
+          aria-pressed={tiltEnabled}
         >
-          {tiltEnabled ? 'Tilt active' : tiltStatus === 'denied' ? 'Tilt denied · use stick' : tiltStatus === 'unavailable' ? 'Tilt unavailable' : 'Enable tilt'}
+          {tiltEnabled ? 'Tilt off' : tiltStatus === 'denied' ? 'Tilt denied · use stick' : tiltStatus === 'unavailable' ? 'Tilt unavailable' : 'Enable tilt'}
         </button>
 
         <div className="touch-actions">
