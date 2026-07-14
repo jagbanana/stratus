@@ -7,6 +7,25 @@ const lerp = (a, b, t) => a + (b - a) * t
 const HIGH_SCORE_COOKIE = 'stratus_high_scores'
 const MUSIC_PREF_KEY = 'stratus_music_enabled'
 const MUSIC_TRACK_URL = '/audio/this-place-is-so-lonely.mp3'
+const UNIT_BOX = new THREE.BoxGeometry(1, 1, 1)
+const UNIT_CYLINDER = new THREE.CylinderGeometry(0.5, 0.5, 1, 6)
+const UNIT_CONE = new THREE.ConeGeometry(0.5, 1, 5)
+const UNIT_EDGES = new THREE.EdgesGeometry(UNIT_BOX)
+
+const BUILDING_MATERIALS = [
+  new THREE.MeshStandardMaterial({ color: 0x101426, roughness: 0.76, metalness: 0.2 }),
+  new THREE.MeshStandardMaterial({ color: 0x171128, roughness: 0.8, metalness: 0.16 }),
+  new THREE.MeshStandardMaterial({ color: 0x102126, roughness: 0.72, metalness: 0.24 }),
+  new THREE.MeshStandardMaterial({ color: 0x24202d, roughness: 0.84, metalness: 0.12 }),
+]
+
+const NEON_MATERIALS = [0x16f7ff, 0xff2bd6, 0xffb000, 0x7dff72].map((color) => (
+  new THREE.MeshBasicMaterial({ color, toneMapped: false })
+))
+
+const EDGE_MATERIALS = [0x16f7ff, 0xff2bd6, 0xffb000, 0x7dff72].map((color) => (
+  new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.3, toneMapped: false })
+))
 
 function detectTouchLikely() {
   if (typeof window === 'undefined' || typeof navigator === 'undefined') return false
@@ -59,10 +78,29 @@ function hashCell(x, z) {
   return n - Math.floor(n)
 }
 
+function addBuildingBox(group, material, width, height, depth, y, x = 0, z = 0) {
+  const mesh = new THREE.Mesh(UNIT_BOX, material)
+  mesh.position.set(x, y, z)
+  mesh.scale.set(width, height, depth)
+  mesh.castShadow = true
+  mesh.receiveShadow = true
+  group.add(mesh)
+  return mesh
+}
+
+function addBuildingEdges(group, material, width, height, depth, y, x = 0, z = 0) {
+  const edges = new THREE.LineSegments(UNIT_EDGES, material)
+  edges.position.set(x, y, z)
+  edges.scale.set(width, height, depth)
+  group.add(edges)
+}
+
 function createBuilding(cellX, cellZ, spacing) {
   const r = hashCell(cellX, cellZ)
   const r2 = hashCell(cellX + 19.4, cellZ - 7.2)
   const r3 = hashCell(cellX - 3.5, cellZ + 42.1)
+  const r4 = hashCell(cellX + 61.7, cellZ + 13.8)
+  const r5 = hashCell(cellX - 28.6, cellZ - 51.3)
 
   const isAvenue = cellX % 4 === 0 || cellZ % 5 === 0
   if (isAvenue || r < 0.18) return null
@@ -73,31 +111,79 @@ function createBuilding(cellX, cellZ, spacing) {
   const x = cellX * spacing + lerp(-4, 4, r3)
   const z = cellZ * spacing + lerp(-4, 4, r2)
 
-  const color = new THREE.Color().setHSL(0.66 + r * 0.1, 0.42, 0.13 + r2 * 0.05)
-  const material = new THREE.MeshStandardMaterial({
-    color,
-    roughness: 0.82,
-    metalness: 0.12,
-  })
+  const mesh = new THREE.Group()
+  mesh.position.set(x, 0, z)
 
-  const mesh = new THREE.Mesh(new THREE.BoxGeometry(width, height, depth), material)
-  mesh.position.set(x, height / 2, z)
-  mesh.castShadow = true
-  mesh.receiveShadow = true
+  const bodyMaterial = BUILDING_MATERIALS[Math.floor(r3 * BUILDING_MATERIALS.length)]
+  const neonIndex = Math.floor(r5 * NEON_MATERIALS.length)
+  const neonMaterial = NEON_MATERIALS[neonIndex]
+  const edgeMaterial = EDGE_MATERIALS[neonIndex]
+  const style = Math.floor(r4 * 5)
 
-  const edges = new THREE.LineSegments(
-    new THREE.EdgesGeometry(mesh.geometry),
-    new THREE.LineBasicMaterial({ color: r2 > 0.5 ? 0x16f7ff : 0xff2bd6, transparent: true, opacity: 0.34 }),
-  )
-  mesh.add(edges)
+  if (style === 0) {
+    addBuildingBox(mesh, bodyMaterial, width, height, depth, height / 2)
+    const crownHeight = Math.min(7, height * 0.13)
+    addBuildingBox(mesh, neonMaterial, width * 0.7, crownHeight, depth * 0.7, height - crownHeight / 2)
+    addBuildingEdges(mesh, edgeMaterial, width, height, depth, height / 2)
+  } else if (style === 1) {
+    const lowerHeight = height * 0.36
+    const middleHeight = height * 0.38
+    const upperHeight = height - lowerHeight - middleHeight
+    addBuildingBox(mesh, bodyMaterial, width, lowerHeight, depth, lowerHeight / 2)
+    addBuildingBox(mesh, bodyMaterial, width * 0.78, middleHeight, depth * 0.78, lowerHeight + middleHeight / 2)
+    addBuildingBox(mesh, bodyMaterial, width * 0.54, upperHeight, depth * 0.54, lowerHeight + middleHeight + upperHeight / 2)
+    addBuildingEdges(mesh, edgeMaterial, width * 0.54, upperHeight, depth * 0.54, height - upperHeight / 2)
+  } else if (style === 2) {
+    const podiumHeight = height * 0.2
+    const towerHeight = height - podiumHeight
+    addBuildingBox(mesh, bodyMaterial, width, podiumHeight, depth, podiumHeight / 2)
+    addBuildingBox(mesh, bodyMaterial, width * 0.36, towerHeight, depth * 0.72, podiumHeight + towerHeight / 2, -width * 0.27)
+    addBuildingBox(mesh, bodyMaterial, width * 0.36, towerHeight * 0.82, depth * 0.72, podiumHeight + towerHeight * 0.41, width * 0.27)
+    addBuildingBox(mesh, neonMaterial, width * 0.27, 1.1, depth * 0.76, height * 0.62, 0)
+  } else if (style === 3) {
+    const podiumHeight = height * 0.22
+    const shaftHeight = height * 0.58
+    const crownHeight = height - podiumHeight - shaftHeight
+    const offsetX = (r2 - 0.5) * width * 0.2
+    const offsetZ = (r3 - 0.5) * depth * 0.2
+    addBuildingBox(mesh, bodyMaterial, width, podiumHeight, depth, podiumHeight / 2)
+    addBuildingBox(mesh, bodyMaterial, width * 0.72, shaftHeight, depth * 0.72, podiumHeight + shaftHeight / 2, offsetX, offsetZ)
+    addBuildingBox(mesh, bodyMaterial, width * 0.48, crownHeight, depth * 0.48, height - crownHeight / 2, -offsetX, -offsetZ)
+    addBuildingEdges(mesh, edgeMaterial, width * 0.72, shaftHeight, depth * 0.72, podiumHeight + shaftHeight / 2, offsetX, offsetZ)
+  } else {
+    const blockHeight = height * 0.78
+    const utilityHeight = height * 0.13
+    const spireHeight = height - blockHeight - utilityHeight
+    addBuildingBox(mesh, bodyMaterial, width, blockHeight, depth, blockHeight / 2)
+    addBuildingBox(mesh, bodyMaterial, width * 0.48, utilityHeight, depth * 0.48, blockHeight + utilityHeight / 2)
+    const spire = new THREE.Mesh(UNIT_CONE, neonMaterial)
+    spire.position.y = height - spireHeight / 2
+    spire.scale.set(Math.max(0.8, width * 0.08), spireHeight, Math.max(0.8, depth * 0.08))
+    mesh.add(spire)
+    addBuildingEdges(mesh, edgeMaterial, width, blockHeight, depth, blockHeight / 2)
+  }
 
-  if (r > 0.55) {
-    const sign = new THREE.Mesh(
-      new THREE.BoxGeometry(width * 0.66, Math.max(1.4, height * 0.035), 0.22),
-      new THREE.MeshBasicMaterial({ color: r2 > 0.5 ? 0x00f5ff : 0xff2bd6 }),
-    )
-    sign.position.set(0, height * 0.2, depth / 2 + 0.14)
-    mesh.add(sign)
+  const bandCount = 1 + Math.floor(r2 * 3)
+  for (let index = 0; index < bandCount; index += 1) {
+    const bandY = height * (0.28 + index * 0.19 + r5 * 0.04)
+    if (bandY > height - 2) break
+    addBuildingBox(mesh, neonMaterial, width + 0.18, 0.34, depth + 0.18, bandY)
+  }
+
+  if (r3 > 0.42 && style !== 2) {
+    const finHeight = height * lerp(0.24, 0.5, r4)
+    const finY = height * 0.18 + finHeight / 2
+    const finWidth = Math.max(0.28, width * 0.018)
+    addBuildingBox(mesh, neonMaterial, finWidth, finHeight, 0.28, finY, -width * 0.35, depth / 2 + 0.15)
+    addBuildingBox(mesh, neonMaterial, finWidth, finHeight * 0.72, 0.28, finY * 0.9, width * 0.35, depth / 2 + 0.15)
+  }
+
+  if (r > 0.72 && style !== 4) {
+    const antennaHeight = Math.min(6, height * 0.12)
+    const antenna = new THREE.Mesh(UNIT_CYLINDER, neonMaterial)
+    antenna.position.y = height + antennaHeight / 2
+    antenna.scale.set(0.3, antennaHeight, 0.3)
+    mesh.add(antenna)
   }
 
   return {
