@@ -291,6 +291,19 @@ strong {
   box-shadow: 0 0 24px rgba(22, 247, 255, 0.45);
 }
 
+.modal-card .quit-button {
+  margin-top: 10px;
+  border-color: rgba(255, 43, 214, 0.62);
+  color: #fff7ff;
+  background: rgba(42, 8, 55, 0.86);
+  box-shadow: 0 0 20px rgba(255, 43, 214, 0.22);
+}
+
+.modal-card .quit-button:hover,
+.modal-card .quit-button:focus-visible {
+  background: rgba(255, 43, 214, 0.34);
+}
+
 @media (max-width: 700px) {
   .hud-top {
     align-items: stretch;

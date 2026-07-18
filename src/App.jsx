@@ -348,6 +348,7 @@ function App() {
   const mountRef = useRef(null)
   const popupsRef = useRef(null)
   const restartRef = useRef(null)
+  const quitRef = useRef(null)
   const musicControlsRef = useRef(null)
   const mobileControlsRef = useRef({ stickX: 0, stickY: 0, boost: false, fire: false })
   const [inputMode, setInputMode] = useState('auto')
@@ -418,6 +419,16 @@ function App() {
     setHighScores(nextScores)
     writeHighScores(nextScores)
     setScoreSubmitted(true)
+  }
+
+  function quitToTitle() {
+    musicEnabledRef.current = false
+    setMusicEnabled(false)
+    musicControlsRef.current?.reset()
+    setInputMode('auto')
+    setInitials('ACE')
+    setScoreSubmitted(false)
+    quitRef.current?.()
   }
 
   useEffect(() => {
@@ -652,12 +663,18 @@ function App() {
       }
     }
 
+    function resetMusic() {
+      stopMusic()
+      if (audio.track) audio.track.currentTime = 0
+    }
+
     musicControlsRef.current = {
       start: () => {
         getAudioContext()
         startMusic()
       },
       stop: stopMusic,
+      reset: resetMusic,
     }
 
     function makeTextTexture(text, color = '#ffffff') {
@@ -791,6 +808,34 @@ function App() {
     }
 
     restartRef.current = resetGame
+
+    function returnToTitle() {
+      clearGameplayObjects()
+      keys.clear()
+      Object.assign(mobileControlsRef.current, { stickX: 0, stickY: 0, boost: false, fire: false })
+      state.position.set(0, 28, 16)
+      previousPlanePosition.copy(state.position)
+      state.yaw = 0
+      state.pitch = 0
+      state.roll = 0
+      state.speed = 42
+      state.score = 0
+      state.hits = 0
+      state.ammo = MAX_AMMO
+      state.fireCooldown = 0
+      state.crashModalDelay = 0
+      state.countdown = 0
+      state.countdownCueIndex = 0
+      state.mouseX = 0
+      state.mouseY = 0
+      state.started = false
+      state.crashed = false
+      state.lastTime = performance.now()
+      plane.visible = true
+      setHud({ score: 0, speed: state.speed, altitude: state.position.y, hits: 0, ammo: state.ammo, crashed: false, started: false })
+    }
+
+    quitRef.current = returnToTitle
 
     function maintainCity() {
       const currentCellZ = Math.floor(state.position.z / spacing)
@@ -1375,9 +1420,12 @@ function App() {
       const isTextEntry = event.target instanceof HTMLInputElement
       if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(event.code) && !isTextEntry) event.preventDefault()
       getAudioContext()
-      if (!isTextEntry && (event.code === 'Enter' || event.code === 'KeyR')) resetGame()
+      if (!isTextEntry && state.crashed) {
+        if (event.code === 'Space') resetGame()
+        return
+      }
       if (!isTextEntry) keys.add(event.code)
-      if (!isTextEntry && !state.started && ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space', 'Enter'].includes(event.code)) resetGame()
+      if (!isTextEntry && !state.started && ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(event.code)) resetGame()
     }
 
     function onKeyUp(event) {
@@ -1419,6 +1467,7 @@ function App() {
       isAlive = false
       cancelAnimationFrame(rafId)
       restartRef.current = null
+      quitRef.current = null
       clearGameplayObjects()
       musicControlsRef.current = null
       stopMusic()
@@ -1541,7 +1590,7 @@ function App() {
             <h1>Ready for launch?</h1>
             <p className="start-copy">Pop targets, thread the neon city, avoid converting the aircraft into modern art.</p>
             <div className="control-legend">
-              <p><strong>Keyboard:</strong> W/S pitch · A/D or arrows bank · Shift boost · Space guns · R restart</p>
+              <p><strong>Keyboard:</strong> W/S pitch · A/D or arrows bank · Shift boost · Space guns</p>
               <p><strong>Ammo:</strong> 300 rounds lasts three seconds of continuous fire. Fly through balloon crates to fully reload.</p>
               <p><strong>Touch:</strong> left stick steers · Shoot and Boost buttons on the right</p>
             </div>
@@ -1596,7 +1645,8 @@ function App() {
               </ol>
             </div>
 
-            <button type="button" onClick={() => restartRef.current?.()}>Click, R, or Enter to fly again</button>
+            <button type="button" onClick={() => restartRef.current?.()}>FLY AGAIN</button>
+            <button type="button" className="quit-button" onClick={quitToTitle}>QUIT</button>
           </div>
         </div>
       )}
