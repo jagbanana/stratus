@@ -7,6 +7,8 @@ const lerp = (a, b, t) => a + (b - a) * t
 const HIGH_SCORE_COOKIE = 'stratus_high_scores'
 const MUSIC_PREF_KEY = 'stratus_music_enabled'
 const MUSIC_TRACK_URL = '/audio/this-place-is-so-lonely.mp3'
+const MAX_AMMO = 300
+const AMMO_DRAIN_PER_SECOND = 100
 // The launch lane is normally an avenue. Reserve this cell for the opening
 // obstacle: an unboosted, level flight reaches its near face about five
 // seconds after the countdown's "GO!" cue.
@@ -304,6 +306,44 @@ function createTarget() {
   return group
 }
 
+function createAmmoCrate() {
+  const group = new THREE.Group()
+  const crateMaterial = new THREE.MeshStandardMaterial({ color: 0x263c24, emissive: 0x0c2e16, roughness: 0.42, metalness: 0.28 })
+  const stripeMaterial = new THREE.MeshBasicMaterial({ color: 0x7dff72, toneMapped: false })
+  const edgeMaterial = new THREE.LineBasicMaterial({ color: 0xffb000, transparent: true, opacity: 0.86, toneMapped: false })
+
+  const crate = new THREE.Mesh(new THREE.BoxGeometry(7.2, 4.8, 4.8), crateMaterial)
+  crate.castShadow = true
+  crate.receiveShadow = true
+  group.add(crate)
+
+  const edges = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(7.2, 4.8, 4.8)), edgeMaterial)
+  group.add(edges)
+
+  ;[-2.15, 0, 2.15].forEach((x) => {
+    const stripe = new THREE.Mesh(new THREE.BoxGeometry(0.42, 5.02, 4.98), stripeMaterial)
+    stripe.position.x = x
+    group.add(stripe)
+  })
+
+  const balloonMaterial = new THREE.MeshStandardMaterial({ color: 0x7dff72, emissive: 0x123c1a, roughness: 0.35 })
+  ;[-3.3, 0, 3.3].forEach((x, index) => {
+    const balloon = new THREE.Mesh(new THREE.SphereGeometry(1.15, 10, 10), balloonMaterial.clone())
+    balloon.material.color.set(index === 1 ? 0xffb000 : 0x7dff72)
+    balloon.material.emissive.set(index === 1 ? 0x513200 : 0x123c1a)
+    balloon.position.set(x, 8.1 + (index % 2) * 0.8, 0)
+    group.add(balloon)
+
+    const stringGeometry = new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(x, 6.95 + (index % 2) * 0.8, 0),
+      new THREE.Vector3(x * 0.38, 2.65, 0),
+    ])
+    group.add(new THREE.Line(stringGeometry, new THREE.LineBasicMaterial({ color: 0xe9ffe7, transparent: true, opacity: 0.7 })))
+  })
+
+  return group
+}
+
 function App() {
   const mountRef = useRef(null)
   const popupsRef = useRef(null)
@@ -312,7 +352,7 @@ function App() {
   const mobileControlsRef = useRef({ stickX: 0, stickY: 0, boost: false, fire: false })
   const [inputMode, setInputMode] = useState('auto')
   const [touchLikely, setTouchLikely] = useState(() => detectTouchLikely())
-  const [hud, setHud] = useState({ score: 0, speed: 0, altitude: 0, hits: 0, crashed: false, started: false })
+  const [hud, setHud] = useState({ score: 0, speed: 0, altitude: 0, hits: 0, ammo: MAX_AMMO, crashed: false, started: false })
   const [highScores, setHighScores] = useState(() => readHighScores())
   const [initials, setInitials] = useState('ACE')
   const [scoreSubmitted, setScoreSubmitted] = useState(false)
@@ -439,6 +479,7 @@ function App() {
       speed: 42,
       score: 0,
       hits: 0,
+      ammo: MAX_AMMO,
       started: false,
       crashed: false,
       lastTime: performance.now(),
@@ -455,6 +496,7 @@ function App() {
     const buildings = new Map()
     const bullets = []
     const targets = []
+    const ammoCrates = []
     const explosions = []
     const crashPieces = []
     const popups = []
@@ -557,6 +599,13 @@ function App() {
       playTone({ frequency: 880, endFrequency: 1320, type: 'triangle', gain: 0.18, duration: 0.08 })
       playTone({ frequency: 1320, endFrequency: 1760, type: 'triangle', gain: 0.14, duration: 0.12, delay: 0.045 })
       playNoise({ gain: 0.12, duration: 0.12, lowpass: 5200 })
+    }
+
+    function playAmmoPickupSound() {
+      playTone({ frequency: 523, endFrequency: 660, type: 'triangle', gain: 0.16, duration: 0.1 })
+      playTone({ frequency: 659, endFrequency: 880, type: 'triangle', gain: 0.17, duration: 0.14, delay: 0.06 })
+      playTone({ frequency: 784, endFrequency: 1175, type: 'square', gain: 0.11, duration: 0.2, delay: 0.12 })
+      playNoise({ gain: 0.08, duration: 0.17, delay: 0.04, lowpass: 6200 })
     }
 
     function playCrashSound() {
@@ -707,6 +756,7 @@ function App() {
     function clearGameplayObjects() {
       bullets.splice(0).forEach((bullet) => effectGroup.remove(bullet.mesh))
       targets.splice(0).forEach((target) => targetGroup.remove(target.mesh))
+      ammoCrates.splice(0).forEach((crate) => targetGroup.remove(crate.mesh))
       explosions.splice(0).forEach((particle) => effectGroup.remove(particle.mesh))
       crashPieces.splice(0).forEach((piece) => effectGroup.remove(piece.mesh))
       popups.splice(0).forEach((popup) => popup.element.remove())
@@ -726,6 +776,7 @@ function App() {
       state.speed = 42
       state.score = 0
       state.hits = 0
+      state.ammo = MAX_AMMO
       state.fireCooldown = 0
       state.crashModalDelay = 0
       state.countdown = 3.7
@@ -736,7 +787,7 @@ function App() {
       plane.visible = true
       setScoreSubmitted(false)
       setupCountdownMarkers()
-      setHud({ score: 0, speed: state.speed, altitude: state.position.y, hits: 0, crashed: false, started: true })
+      setHud({ score: 0, speed: state.speed, altitude: state.position.y, hits: 0, ammo: state.ammo, crashed: false, started: true })
     }
 
     restartRef.current = resetGame
@@ -910,13 +961,21 @@ function App() {
       })
     }
 
-    function addScorePopup(position, points) {
+    function addPopup(position, text, className = 'score-pop') {
       if (!popupLayer) return
       const element = document.createElement('div')
-      element.className = 'score-pop'
-      element.textContent = `+${points}!`
+      element.className = className
+      element.textContent = text
       popupLayer.appendChild(element)
       popups.push({ element, position: position.clone(), age: 0, ttl: 1.15 })
+    }
+
+    function addScorePopup(position, points) {
+      addPopup(position, `+${points}!`)
+    }
+
+    function addAmmoPopup(position) {
+      addPopup(position, 'AMMO FULL!', 'score-pop ammo-pop')
     }
 
     function placeTarget(target, preferAhead = true) {
@@ -968,6 +1027,72 @@ function App() {
       placeTarget(target, true)
     }
 
+    function createAmmoBurst(position) {
+      const colors = [0x7dff72, 0xffb000, 0x16f7ff, 0xffffff, 0xff2bd6]
+      for (let index = 0; index < 38; index += 1) {
+        const mesh = new THREE.Mesh(
+          new THREE.BoxGeometry(0.38 + Math.random() * 0.65, 0.25 + Math.random() * 0.68, 0.3 + Math.random() * 0.56),
+          new THREE.MeshBasicMaterial({ color: colors[index % colors.length], transparent: true, opacity: 1 }),
+        )
+        mesh.position.copy(position)
+        mesh.rotation.set(Math.random() * Math.PI, Math.random() * Math.PI, Math.random() * Math.PI)
+        effectGroup.add(mesh)
+        explosions.push({
+          mesh,
+          velocity: new THREE.Vector3((Math.random() - 0.5) * 54, Math.random() * 38 + 7, (Math.random() - 0.5) * 54),
+          ttl: 0.82,
+          age: 0,
+        })
+      }
+    }
+
+    function placeAmmoCrate(crate, preferAhead = true) {
+      const forward = getForwardVector(false)
+      const right = getRightVector()
+      const slot = crate.mesh.userData.slot
+      const openingCrate = slot === 0
+      const distance = openingCrate ? 270 : preferAhead ? lerp(150, 480, Math.random()) : lerp(95, 360, Math.random())
+      const lateral = openingCrate ? 58 : lerp(-120, 120, Math.random())
+      const vertical = openingCrate ? clamp(state.position.y + 5, 24, 54) : lerp(19, 56, Math.random())
+      crate.mesh.position.copy(state.position)
+      crate.mesh.position.addScaledVector(forward, distance)
+      crate.mesh.position.addScaledVector(right, lateral)
+      crate.mesh.position.y = vertical
+      crate.mesh.userData.wobble = Math.random() * Math.PI * 2
+    }
+
+    function spawnAmmoCrate(preferAhead = true) {
+      const mesh = createAmmoCrate()
+      mesh.userData.slot = ammoCrates.length
+      const crate = { mesh, radius: 7.4 }
+      placeAmmoCrate(crate, preferAhead)
+      targetGroup.add(mesh)
+      ammoCrates.push(crate)
+    }
+
+    function maintainAmmoCrates() {
+      while (ammoCrates.length < 3) spawnAmmoCrate(true)
+
+      const forward = getForwardVector(false)
+      for (const crate of ammoCrates) {
+        const toCrate = tempVector.copy(crate.mesh.position).sub(state.position)
+        const behind = toCrate.dot(forward) < -90
+        const tooFar = toCrate.lengthSq() > 620 * 620
+        if (behind || tooFar || crate.mesh.position.y < 6) placeAmmoCrate(crate, true)
+        crate.mesh.userData.wobble += 0.025
+        crate.mesh.position.y += Math.sin(crate.mesh.userData.wobble) * 0.022
+        crate.mesh.lookAt(camera.position)
+      }
+    }
+
+    function collectAmmoCrate(crate) {
+      state.ammo = MAX_AMMO
+      playAmmoPickupSound()
+      createAmmoBurst(crate.mesh.position)
+      addAmmoPopup(crate.mesh.position)
+      placeAmmoCrate(crate, true)
+    }
+
     function updateBullets(dt) {
       for (let index = bullets.length - 1; index >= 0; index -= 1) {
         const bullet = bullets[index]
@@ -1014,6 +1139,26 @@ function App() {
         }
         if (closestDistanceSq < combinedRadius * combinedRadius) {
           awardTarget(target, 500)
+          return
+        }
+      }
+    }
+
+    function checkAmmoCrateFlyThrough() {
+      const planeRadius = 2.35
+      const path = tempVector.copy(state.position).sub(previousPlanePosition)
+      const pathLengthSq = path.lengthSq()
+      for (const crate of ammoCrates) {
+        const combinedRadius = crate.radius + planeRadius
+        let closestDistanceSq
+        if (pathLengthSq > 0.0001) {
+          const t = clamp(crate.mesh.position.clone().sub(previousPlanePosition).dot(path) / pathLengthSq, 0, 1)
+          closestDistanceSq = previousPlanePosition.clone().addScaledVector(path, t).distanceToSquared(crate.mesh.position)
+        } else {
+          closestDistanceSq = state.position.distanceToSquared(crate.mesh.position)
+        }
+        if (closestDistanceSq < combinedRadius * combinedRadius) {
+          collectAmmoCrate(crate)
           return
         }
       }
@@ -1109,6 +1254,7 @@ function App() {
 
       maintainCity()
       maintainTargets()
+      maintainAmmoCrates()
 
       const mobile = mobileControlsRef.current
       const throttle = keys.has('ShiftLeft') || keys.has('ShiftRight') || mobile.boost
@@ -1162,13 +1308,16 @@ function App() {
           state.position.y = Math.min(state.position.y, 74)
           if (state.position.y > 69) state.pitch -= dt * 0.32
 
+          const firingWithAmmo = firing && state.ammo > 0
+          if (firingWithAmmo) state.ammo = Math.max(0, state.ammo - AMMO_DRAIN_PER_SECOND * dt)
           state.fireCooldown = Math.max(0, state.fireCooldown - dt)
-          if (firing && state.fireCooldown <= 0) {
+          if (firingWithAmmo && state.fireCooldown <= 0) {
             fireGuns()
             state.fireCooldown = 0.085
           }
 
           checkTargetFlyThrough()
+          checkAmmoCrateFlyThrough()
 
           state.score += dt * state.speed * 0.55
           state.mouseX *= 0.82
@@ -1179,7 +1328,7 @@ function App() {
             state.crashed = true
             state.crashModalDelay = 1.25
             createCrashEffect()
-            setHud({ score: Math.floor(state.score), speed: Math.round(state.speed), altitude: Math.round(state.position.y), hits: state.hits, crashed: false, started: true })
+            setHud({ score: Math.floor(state.score), speed: Math.round(state.speed), altitude: Math.round(state.position.y), hits: state.hits, ammo: Math.ceil(state.ammo), crashed: false, started: true })
           }
         }
       }
@@ -1193,7 +1342,7 @@ function App() {
       if (state.crashed && state.crashModalDelay > 0) {
         state.crashModalDelay -= dt
         if (state.crashModalDelay <= 0) {
-          setHud({ score: Math.floor(state.score), speed: Math.round(state.speed), altitude: Math.round(state.position.y), hits: state.hits, crashed: true, started: true })
+          setHud({ score: Math.floor(state.score), speed: Math.round(state.speed), altitude: Math.round(state.position.y), hits: state.hits, ammo: Math.ceil(state.ammo), crashed: true, started: true })
         }
       }
       ground.position.x = state.position.x
@@ -1213,6 +1362,7 @@ function App() {
           speed: Math.round(state.speed),
           altitude: Math.round(state.position.y),
           hits: state.hits,
+          ammo: Math.ceil(state.ammo),
           crashed: state.crashed,
           started: state.started,
         })
@@ -1262,7 +1412,7 @@ function App() {
     renderer.domElement.addEventListener('click', onClick)
 
     setupSpeedLines()
-    setHud({ score: 0, speed: state.speed, altitude: state.position.y, hits: 0, crashed: false, started: false })
+    setHud({ score: 0, speed: state.speed, altitude: state.position.y, hits: 0, ammo: state.ammo, crashed: false, started: false })
     rafId = requestAnimationFrame(animate)
 
     return () => {
@@ -1307,6 +1457,13 @@ function App() {
         <div>
           <span className="label">HITS</span>
           <strong>{hud.hits}</strong>
+        </div>
+        <div className="ammo-readout">
+          <span className="label">AMMO</span>
+          <strong>{hud.ammo}</strong>
+          <span className="ammo-meter" aria-label={`${hud.ammo} of ${MAX_AMMO} ammo`}>
+            <span style={{ width: `${(hud.ammo / MAX_AMMO) * 100}%` }} />
+          </span>
         </div>
         <div>
           <span className="label">SPD</span>
@@ -1385,6 +1542,7 @@ function App() {
             <p className="start-copy">Pop targets, thread the neon city, avoid converting the aircraft into modern art.</p>
             <div className="control-legend">
               <p><strong>Keyboard:</strong> W/S pitch · A/D or arrows bank · Shift boost · Space guns · R restart</p>
+              <p><strong>Ammo:</strong> 300 rounds lasts three seconds of continuous fire. Fly through balloon crates to fully reload.</p>
               <p><strong>Touch:</strong> left stick steers · Shoot and Boost buttons on the right</p>
             </div>
             <div className="input-choice" aria-label="Control mode">
