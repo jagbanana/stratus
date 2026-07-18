@@ -7,6 +7,10 @@ const lerp = (a, b, t) => a + (b - a) * t
 const HIGH_SCORE_COOKIE = 'stratus_high_scores'
 const MUSIC_PREF_KEY = 'stratus_music_enabled'
 const MUSIC_TRACK_URL = '/audio/this-place-is-so-lonely.mp3'
+// The launch lane is normally an avenue. Reserve this cell for the opening
+// obstacle: an unboosted, level flight reaches its near face about five
+// seconds after the countdown's "GO!" cue.
+const INTRO_OBSTACLE_CELL = { x: 0, z: -13 }
 const UNIT_BOX = new THREE.BoxGeometry(1, 1, 1)
 const UNIT_CYLINDER = new THREE.CylinderGeometry(0.5, 0.5, 1, 6)
 const UNIT_CONE = new THREE.ConeGeometry(0.5, 1, 5)
@@ -102,8 +106,9 @@ function createBuilding(cellX, cellZ, spacing) {
   const r4 = hashCell(cellX + 61.7, cellZ + 13.8)
   const r5 = hashCell(cellX - 28.6, cellZ - 51.3)
 
+  const isIntroObstacle = cellX === INTRO_OBSTACLE_CELL.x && cellZ === INTRO_OBSTACLE_CELL.z
   const isAvenue = cellX % 4 === 0 || cellZ % 5 === 0
-  if (isAvenue || r < 0.18) return null
+  if (!isIntroObstacle && (isAvenue || r < 0.18)) return null
 
   const width = lerp(12, 25, r2)
   const depth = lerp(12, 25, r3)
