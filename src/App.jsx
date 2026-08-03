@@ -1,5 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js'
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js'
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js'
+import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js'
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
+import { FXAAShader } from 'three/addons/shaders/FXAAShader.js'
 import './App.css'
 
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value))
@@ -437,25 +443,147 @@ function App() {
     if (!mount) return undefined
 
     const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance' })
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5))
+    const pixelRatio = Math.min(window.devicePixelRatio, 1.5)
+    renderer.setPixelRatio(pixelRatio)
     renderer.setSize(mount.clientWidth, mount.clientHeight)
-    renderer.setClearColor(0x090512)
+    renderer.outputColorSpace = THREE.SRGBColorSpace
+    renderer.toneMapping = THREE.ACESFilmicToneMapping
+    renderer.toneMappingExposure = 1.08
+    renderer.setClearColor(0x070612)
     renderer.shadowMap.enabled = true
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap
+    renderer.shadowMap.type = THREE.PCFShadowMap
     mount.appendChild(renderer.domElement)
 
     const scene = new THREE.Scene()
-    scene.fog = new THREE.FogExp2(0x130722, 0.011)
+    scene.fog = new THREE.FogExp2(0x17122e, 0.0095)
 
     const camera = new THREE.PerspectiveCamera(66, mount.clientWidth / mount.clientHeight, 0.1, 900)
-    const hemi = new THREE.HemisphereLight(0x5bd7ff, 0x1b072d, 1.4)
+    const hemi = new THREE.HemisphereLight(0x73bfff, 0x16071f, 1.25)
     scene.add(hemi)
 
-    const sun = new THREE.DirectionalLight(0xff9a62, 2.5)
-    sun.position.set(-40, 95, 40)
+    const sun = new THREE.DirectionalLight(0xffa46f, 2.65)
+    const sunTarget = new THREE.Object3D()
+    sun.position.set(-92, 88, -145)
+    sun.target = sunTarget
     sun.castShadow = true
     sun.shadow.mapSize.set(1024, 1024)
-    scene.add(sun)
+    sun.shadow.camera.left = -72
+    sun.shadow.camera.right = 72
+    sun.shadow.camera.top = 72
+    sun.shadow.camera.bottom = -72
+    sun.shadow.camera.near = 12
+    sun.shadow.camera.far = 340
+    sun.shadow.bias = -0.00015
+    sun.shadow.normalBias = 0.025
+    scene.add(sun, sunTarget)
+
+    const composer = new EffectComposer(renderer)
+    composer.setPixelRatio(pixelRatio)
+    composer.setSize(mount.clientWidth, mount.clientHeight)
+    composer.addPass(new RenderPass(scene, camera))
+    const fxaaPass = new ShaderPass(FXAAShader)
+    fxaaPass.material.uniforms.resolution.value.set(1 / (mount.clientWidth * pixelRatio), 1 / (mount.clientHeight * pixelRatio))
+    composer.addPass(fxaaPass)
+    const bloomPass = new UnrealBloomPass(new THREE.Vector2(mount.clientWidth, mount.clientHeight), 0.68, 0.58, 0.83)
+    composer.addPass(bloomPass)
+    composer.addPass(new OutputPass())
+
+    const atmosphere = new THREE.Group()
+    const skyMaterial = new THREE.ShaderMaterial({
+      uniforms: {
+        sunDirection: { value: new THREE.Vector3(-0.34, 0.13, -0.93).normalize() },
+        moonDirection: { value: new THREE.Vector3(0.57, 0.2, 0.79).normalize() },
+      },
+      vertexShader: `varying vec3 vDirection; void main() { vDirection = normalize(position); gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+      fragmentShader: `
+        uniform vec3 sunDirection;
+        uniform vec3 moonDirection;
+        varying vec3 vDirection;
+        void main() {
+          float altitude = smoothstep(-0.22, 0.82, vDirection.y);
+          vec3 horizon = vec3(0.055, 0.035, 0.13);
+          vec3 zenith = vec3(0.006, 0.012, 0.055);
+          vec3 color = mix(horizon, zenith, altitude);
+          float sunGlow = pow(max(dot(vDirection, sunDirection), 0.0), 7.0);
+          float moonGlow = pow(max(dot(vDirection, moonDirection), 0.0), 13.0);
+          color += vec3(0.50, 0.16, 0.05) * sunGlow;
+          color += vec3(0.05, 0.14, 0.38) * moonGlow;
+          gl_FragColor = vec4(color, 1.0);
+        }
+      `,
+      side: THREE.BackSide,
+      depthTest: false,
+      depthWrite: false,
+    })
+    const sky = new THREE.Mesh(new THREE.SphereGeometry(1, 32, 20), skyMaterial)
+    sky.scale.setScalar(780)
+    sky.renderOrder = -100
+    sky.frustumCulled = false
+    atmosphere.add(sky)
+
+    function makeRadialTexture() {
+      const canvas = document.createElement('canvas')
+      canvas.width = 128
+      canvas.height = 128
+      const context = canvas.getContext('2d')
+      const gradient = context.createRadialGradient(64, 64, 0, 64, 64, 64)
+      gradient.addColorStop(0, 'rgba(255,255,255,1)')
+      gradient.addColorStop(0.16, 'rgba(255,255,255,0.95)')
+      gradient.addColorStop(0.42, 'rgba(255,255,255,0.22)')
+      gradient.addColorStop(1, 'rgba(255,255,255,0)')
+      context.fillStyle = gradient
+      context.fillRect(0, 0, 128, 128)
+      const texture = new THREE.CanvasTexture(canvas)
+      texture.colorSpace = THREE.SRGBColorSpace
+      return texture
+    }
+
+    const hazeTexture = makeRadialTexture()
+    const sunDirection = skyMaterial.uniforms.sunDirection.value
+    const moonDirection = skyMaterial.uniforms.moonDirection.value
+    const sunDisc = new THREE.Sprite(new THREE.SpriteMaterial({ map: hazeTexture, color: 0xffb17a, transparent: true, opacity: 0.95, depthWrite: false, toneMapped: false }))
+    const sunHalo = new THREE.Sprite(new THREE.SpriteMaterial({ map: hazeTexture, color: 0xff7c55, transparent: true, opacity: 0.2, depthWrite: false, toneMapped: false }))
+    const moonDisc = new THREE.Sprite(new THREE.SpriteMaterial({ map: hazeTexture, color: 0x9ecbff, transparent: true, opacity: 0.7, depthWrite: false, toneMapped: false }))
+    const moonHalo = new THREE.Sprite(new THREE.SpriteMaterial({ map: hazeTexture, color: 0x478eff, transparent: true, opacity: 0.12, depthWrite: false, toneMapped: false }))
+    sunDisc.scale.set(44, 44, 1)
+    sunHalo.scale.set(164, 164, 1)
+    moonDisc.scale.set(29, 29, 1)
+    moonHalo.scale.set(116, 116, 1)
+    atmosphere.add(sunHalo, sunDisc, moonHalo, moonDisc)
+
+    const hazeLayers = []
+    for (let index = 0; index < 11; index += 1) {
+      const material = new THREE.SpriteMaterial({
+        map: hazeTexture,
+        color: index % 3 === 0 ? 0x99517d : 0x476fc1,
+        transparent: true,
+        opacity: 0.055 + (index % 4) * 0.012,
+        depthWrite: false,
+      })
+      const sprite = new THREE.Sprite(material)
+      sprite.scale.set(160 + (index % 4) * 52, 42 + (index % 3) * 18, 1)
+      atmosphere.add(sprite)
+      hazeLayers.push({ sprite, angle: index * 2.399, radius: 95 + (index % 5) * 58, speed: 0.006 + (index % 3) * 0.003, altitude: 8 + (index % 4) * 5 })
+    }
+
+    const shaftGeometry = new THREE.PlaneGeometry(72, 220)
+    const shafts = []
+    for (let index = 0; index < 5; index += 1) {
+      const material = new THREE.MeshBasicMaterial({
+        color: index % 2 === 0 ? 0xff8a65 : 0x897ee5,
+        transparent: true,
+        opacity: 0,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+        side: THREE.DoubleSide,
+        toneMapped: false,
+      })
+      const shaft = new THREE.Mesh(shaftGeometry, material)
+      shaft.renderOrder = -2
+      atmosphere.add(shaft)
+      shafts.push({ mesh: shaft, offset: (index - 2) * 48, distance: 235 + index * 42 })
+    }
+    scene.add(atmosphere)
 
     const city = new THREE.Group()
     scene.add(city)
@@ -521,6 +649,9 @@ function App() {
     const cameraViewProjection = new THREE.Matrix4()
     const cameraFrustum = new THREE.Frustum()
     const targetSphere = new THREE.Sphere()
+    const atmosphereCameraDirection = new THREE.Vector3()
+    const atmosphereSide = new THREE.Vector3()
+    const atmospherePosition = new THREE.Vector3()
     const audio = { context: null, master: null, track: null, musicPlaying: false, unlocked: false }
 
     function getAudioContext() {
@@ -898,6 +1029,41 @@ function App() {
       camera.updateMatrixWorld()
       cameraViewProjection.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse)
       cameraFrustum.setFromProjectionMatrix(cameraViewProjection)
+    }
+
+    function updateLighting(now) {
+      // Keep the single shadow source focused around the aircraft instead of
+      // leaving its useful shadow map behind in an already-streamed city cell.
+      sunTarget.position.copy(state.position)
+      sun.position.copy(state.position).addScaledVector(sunDirection, 220)
+      sun.position.y += 82
+
+      sky.position.copy(camera.position)
+      sunDisc.position.copy(camera.position).addScaledVector(sunDirection, 650)
+      sunHalo.position.copy(sunDisc.position)
+      moonDisc.position.copy(camera.position).addScaledVector(moonDirection, 620)
+      moonHalo.position.copy(moonDisc.position)
+
+      hazeLayers.forEach((layer) => {
+        const angle = layer.angle + now * layer.speed * 0.001
+        layer.sprite.position.set(
+          state.position.x + Math.cos(angle) * layer.radius,
+          layer.altitude + Math.sin(now * layer.speed * 0.001 + layer.angle) * 3,
+          state.position.z + Math.sin(angle) * layer.radius,
+        )
+      })
+
+      camera.getWorldDirection(atmosphereCameraDirection)
+      const sunFacing = clamp((atmosphereCameraDirection.dot(sunDirection) + 0.04) / 0.94, 0, 1)
+      atmosphereSide.crossVectors(worldUp, sunDirection).normalize()
+      shafts.forEach((shaft, index) => {
+        atmospherePosition.copy(camera.position).addScaledVector(sunDirection, shaft.distance)
+        atmospherePosition.addScaledVector(atmosphereSide, shaft.offset)
+        atmospherePosition.y -= 24 + index * 6
+        shaft.mesh.position.copy(atmospherePosition)
+        shaft.mesh.quaternion.copy(camera.quaternion)
+        shaft.mesh.material.opacity = sunFacing * (0.025 + (index % 2) * 0.012)
+      })
     }
 
     function isTargetVisibleToPlayer(target) {
@@ -1380,6 +1546,7 @@ function App() {
 
       if (!state.crashed) updatePlaneVisual()
       updateCamera(dt)
+      updateLighting(now)
       updateBullets(dt)
       updateExplosions(dt)
       updateCrashPieces(dt)
@@ -1397,7 +1564,7 @@ function App() {
 
       updateSpeedLines(dt, throttle && state.countdown <= 0 && !state.crashed)
       updateScorePopups(dt)
-      renderer.render(scene, camera)
+      composer.render()
 
       state.hudTime += dt
       if (state.hudTime > 0.12 && !state.crashed) {
@@ -1451,6 +1618,8 @@ function App() {
       camera.aspect = width / height
       camera.updateProjectionMatrix()
       renderer.setSize(width, height)
+      composer.setSize(width, height)
+      fxaaPass.material.uniforms.resolution.value.set(1 / (width * pixelRatio), 1 / (height * pixelRatio))
     }
 
     window.addEventListener('keydown', onKeyDown)
@@ -1486,6 +1655,14 @@ function App() {
         audio.track.src = ''
       }
       if (audio.context) audio.context.close()
+      ;[sunDisc, sunHalo, moonDisc, moonHalo].forEach((sprite) => sprite.material.dispose())
+      hazeLayers.forEach((layer) => layer.sprite.material.dispose())
+      shafts.forEach((shaft) => shaft.mesh.material.dispose())
+      shaftGeometry.dispose()
+      sky.geometry.dispose()
+      skyMaterial.dispose()
+      hazeTexture.dispose()
+      composer.dispose()
       if (renderer.domElement.parentElement === mount) mount.removeChild(renderer.domElement)
       renderer.dispose()
     }
