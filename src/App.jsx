@@ -150,8 +150,6 @@ function createBuilding(cellX, cellZ, spacing) {
 
   if (style === 0) {
     addBuildingBox(mesh, bodyMaterial, width, height, depth, height / 2)
-    const crownHeight = Math.min(7, height * 0.13)
-    addBuildingBox(mesh, neonMaterial, width * 0.7, crownHeight, depth * 0.7, height - crownHeight / 2)
     addBuildingEdges(mesh, edgeMaterial, width, height, depth, height / 2)
   } else if (style === 1) {
     const lowerHeight = height * 0.36
@@ -637,13 +635,19 @@ function App() {
 
     const sunDirection = skyMaterial.uniforms.sunDirection.value
     const moonDirection = skyMaterial.uniforms.moonDirection.value
-    const sunDisc = new THREE.Sprite(new THREE.SpriteMaterial({ map: hazeTexture, color: 0xffb17a, transparent: true, opacity: 0.95, depthWrite: false, toneMapped: false }))
-    const sunHalo = new THREE.Sprite(new THREE.SpriteMaterial({ map: hazeTexture, color: 0xff7c55, transparent: true, opacity: 0.2, depthWrite: false, toneMapped: false }))
-    const moonDisc = new THREE.Sprite(new THREE.SpriteMaterial({ map: hazeTexture, color: 0x9ecbff, transparent: true, opacity: 0.7, depthWrite: false, toneMapped: false }))
-    const moonHalo = new THREE.Sprite(new THREE.SpriteMaterial({ map: hazeTexture, color: 0x478eff, transparent: true, opacity: 0.12, depthWrite: false, toneMapped: false }))
-    sunDisc.scale.set(44, 44, 1)
+    const sunDisc = new THREE.Mesh(
+      new THREE.CircleGeometry(1, 32),
+      new THREE.MeshBasicMaterial({ color: new THREE.Color(4.6, 1.35, 0.34), side: THREE.DoubleSide, depthWrite: false, fog: false, toneMapped: false }),
+    )
+    const sunHalo = new THREE.Sprite(new THREE.SpriteMaterial({ map: hazeTexture, color: new THREE.Color(2.2, 0.45, 0.12), transparent: true, opacity: 0.3, depthWrite: false, blending: THREE.AdditiveBlending, fog: false, toneMapped: false }))
+    const moonDisc = new THREE.Mesh(
+      new THREE.CircleGeometry(1, 28),
+      new THREE.MeshBasicMaterial({ color: new THREE.Color(0.48, 0.92, 1.65), side: THREE.DoubleSide, depthWrite: false, fog: false, toneMapped: false }),
+    )
+    const moonHalo = new THREE.Sprite(new THREE.SpriteMaterial({ map: hazeTexture, color: new THREE.Color(0.15, 0.38, 1.15), transparent: true, opacity: 0.16, depthWrite: false, blending: THREE.AdditiveBlending, fog: false, toneMapped: false }))
+    sunDisc.scale.set(32, 32, 1)
     sunHalo.scale.set(164, 164, 1)
-    moonDisc.scale.set(29, 29, 1)
+    moonDisc.scale.set(21, 21, 1)
     moonHalo.scale.set(116, 116, 1)
     atmosphere.add(sunHalo, sunDisc, moonHalo, moonDisc)
 
@@ -1232,8 +1236,10 @@ function App() {
 
       sky.position.copy(camera.position)
       sunDisc.position.copy(camera.position).addScaledVector(sunDirection, 650)
+      sunDisc.quaternion.copy(camera.quaternion)
       sunHalo.position.copy(sunDisc.position)
       moonDisc.position.copy(camera.position).addScaledVector(moonDirection, 620)
+      moonDisc.quaternion.copy(camera.quaternion)
       moonHalo.position.copy(moonDisc.position)
 
       hazeLayers.forEach((layer) => {

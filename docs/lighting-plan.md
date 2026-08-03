@@ -7,21 +7,56 @@ and pushed as `574eb8c` (`Add cinematic lighting pass`). Justin then authorized
 Pass 2, which was implemented and pushed as `5e21e45` (`Add living city
 lighting pass`). Gameplay behavior remains unchanged.
 
+## Current implementation and handoff (2026-08-02)
+
+- **Core pipeline:** `src/App.jsx` uses `EffectComposer` with render, optional
+  GTAO, FXAA, Unreal Bloom, and output passes. The renderer uses ACES filmic
+  tone mapping, a `1.5` device-pixel-ratio cap, and one player-following warm
+  directional shadow source.
+- **Sky and celestial bodies:** the sky is a shader dome. Sun and moon are
+  camera-facing HDR `CircleGeometry` meshes with `fog: false`, so distant
+  exponential fog cannot turn them into black discs. Their additive halo
+  sprites provide bloom; the sun is intentionally brighter/larger, the moon
+  cooler and subtler. Keep them depth-tested and depth-write-disabled so city
+  geometry can still occlude the horizon.
+- **Living city:** building bodies share deterministic canvas-based emissive
+  window textures; the occasional facade sign is a thin panel, not a roof cap.
+  Avenue lamps use instanced pole/head meshes plus bloom halos—there is no real
+  light per lamp and they do not alter collision. Rooftop beacons pulse from a
+  deterministic phase; the aircraft has emissive navigation lights.
+- **Roof guardrail:** style-0 buildings must not regain the old full neon crown
+  box. It produced the longstanding, glitchy filled-square roof artifact.
+- **Quality control:** the persisted `stratus_quality` preference cycles
+  **Balanced → Cinematic → Low**. Balanced is the normal desktop mode;
+  Cinematic enables half-resolution GTAO; Low and touch/mobile fallback reduce
+  composer resolution/bloom and leave GTAO off.
+- **Verification convention:** run `npm run lint`, `npm run build`, and
+  `git diff --check`; use a browser smoke pass for desktop and 390px mobile.
+  `smoke/` is deliberately untracked, including visual captures. The current
+  bundle is about 834 kB minified; the Vite 500 kB advisory is expected but
+  hardware profiling should precede any heavier visual work.
+
+### Latest visual correction
+
+The post-Pass-2 celestial/roof repair replaces fogged transparent sun/moon
+sprites with fog-proof HDR discs plus additive halos, and removes the
+problematic neon roof crowns.
+
 ## Project constraints verified during review
 
 - Stack: Vite, React, and Three.js `r185`; browser/WebGL static app deployed
   through Cloudflare.
 - Main scene implementation: `src/App.jsx`, including the renderer, streamed
   procedural city, flight mechanics, collision, targets, and effects.
-- Existing visual baseline: `WebGLRenderer` at device-pixel-ratio cap `1.5`,
-  `PCFSoftShadowMap`, one shadow-casting directional light, hemisphere fill,
-  exponential fog, dark `MeshStandardMaterial` building bodies, and emissive
-  neon geometry.
+- Current visual baseline: `WebGLRenderer` at device-pixel-ratio cap `1.5`,
+  `PCFShadowMap`, one shadow-casting directional light, hemisphere fill,
+  exponential fog, shared emissive window materials, instanced avenue lamps,
+  and emissive neon geometry.
 - City streaming can retain roughly a thousand building cells around the
   aircraft, each with several meshes. Lighting must add atmosphere without
   multiplying draw calls or per-fragment light cost.
-- `npm run lint` and `npm run build` passed at review time. The production
-  JavaScript bundle is already about 761 kB before adding post-processing.
+- `npm run lint` and `npm run build` pass. The production JavaScript bundle is
+  about 834 kB after the post-processing and GTAO implementation.
 
 ## Art direction
 
