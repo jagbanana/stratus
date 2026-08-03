@@ -2,14 +2,10 @@
 
 ## Status and resume cue
 
-Captured 2026-08-02 after a direct repository review. Justin will fix the
-semantic memory index before implementation. When he returns, the intended
-instruction is:
-
-> Review the Stratus lighting plan and start Pass 1.
-
-Start with Pass 1 only. Do not begin Pass 2, publish, or change gameplay
-behavior without subsequent direction.
+Captured 2026-08-02 after a direct repository review. Pass 1 was implemented
+and pushed as `574eb8c` (`Add cinematic lighting pass`). Justin then authorized
+Pass 2; its local implementation is complete and awaits a separate publish
+instruction. Gameplay behavior remains unchanged.
 
 ## Project constraints verified during review
 

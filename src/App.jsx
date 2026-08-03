@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js'
+import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js'
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js'
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js'
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js'
@@ -12,6 +13,7 @@ const clamp = (value, min, max) => Math.max(min, Math.min(max, value))
 const lerp = (a, b, t) => a + (b - a) * t
 const HIGH_SCORE_COOKIE = 'stratus_high_scores'
 const MUSIC_PREF_KEY = 'stratus_music_enabled'
+const QUALITY_PREF_KEY = 'stratus_quality'
 const MUSIC_TRACK_URL = '/audio/this-place-is-so-lonely.mp3'
 const MAX_AMMO = 300
 const AMMO_DRAIN_PER_SECOND = 100
@@ -22,6 +24,7 @@ const INTRO_OBSTACLE_CELL = { x: 0, z: -13 }
 const UNIT_BOX = new THREE.BoxGeometry(1, 1, 1)
 const UNIT_CYLINDER = new THREE.CylinderGeometry(0.5, 0.5, 1, 6)
 const UNIT_CONE = new THREE.ConeGeometry(0.5, 1, 5)
+const UNIT_BEACON = new THREE.OctahedronGeometry(0.5, 0)
 const UNIT_EDGES = new THREE.EdgesGeometry(UNIT_BOX)
 
 const BUILDING_MATERIALS = [
@@ -85,6 +88,17 @@ function writeMusicPreference(enabled) {
   window.localStorage.setItem(MUSIC_PREF_KEY, enabled ? 'on' : 'off')
 }
 
+function readQualityPreference() {
+  if (typeof window === 'undefined') return 'balanced'
+  const saved = window.localStorage.getItem(QUALITY_PREF_KEY)
+  return ['low', 'balanced', 'cinematic'].includes(saved) ? saved : 'balanced'
+}
+
+function writeQualityPreference(quality) {
+  if (typeof window === 'undefined') return
+  window.localStorage.setItem(QUALITY_PREF_KEY, quality)
+}
+
 function hashCell(x, z) {
   const n = Math.sin(x * 127.1 + z * 311.7) * 43758.5453123
   return n - Math.floor(n)
@@ -125,6 +139,7 @@ function createBuilding(cellX, cellZ, spacing) {
   const z = cellZ * spacing + lerp(-4, 4, r2)
 
   const mesh = new THREE.Group()
+  const beacons = []
   mesh.position.set(x, 0, z)
 
   const bodyMaterial = BUILDING_MATERIALS[Math.floor(r3 * BUILDING_MATERIALS.length)]
@@ -199,8 +214,21 @@ function createBuilding(cellX, cellZ, spacing) {
     mesh.add(antenna)
   }
 
+  if (r4 > 0.48) {
+    const beacon = new THREE.Mesh(UNIT_BEACON, NEON_MATERIALS[neonIndex])
+    beacon.position.set((r2 - 0.5) * width * 0.3, height + 1.1, (r3 - 0.5) * depth * 0.3)
+    beacon.userData.beaconPhase = r5 * Math.PI * 2
+    mesh.add(beacon)
+    beacons.push(beacon)
+  }
+
+  if (r5 > 0.7) {
+    addBuildingBox(mesh, neonMaterial, Math.min(width * 0.46, 8.5), 1.1, 0.22, height * (0.42 + r2 * 0.24), 0, depth / 2 + 0.16)
+  }
+
   return {
     mesh,
+    beacons,
     bounds: {
       x,
       z,
@@ -260,6 +288,21 @@ function createPlane() {
   prop.position.z = -3.28
   plane.add(prop)
   plane.userData.prop = prop
+
+  const navLights = [
+    [0xff365e, new THREE.Vector3(-3.18, 0.08, -0.25)],
+    [0x55ffbd, new THREE.Vector3(3.18, 0.08, -0.25)],
+    [0xe8f5ff, new THREE.Vector3(0, 0.64, 2.2)],
+  ].map(([color, position]) => {
+    const light = new THREE.Mesh(
+      new THREE.BoxGeometry(0.25, 0.12, 0.25),
+      new THREE.MeshBasicMaterial({ color, toneMapped: false }),
+    )
+    light.position.copy(position)
+    plane.add(light)
+    return light
+  })
+  plane.userData.navLights = navLights
 
   return plane
 }
@@ -364,7 +407,10 @@ function App() {
   const [initials, setInitials] = useState('ACE')
   const [scoreSubmitted, setScoreSubmitted] = useState(false)
   const [musicEnabled, setMusicEnabled] = useState(() => readMusicPreference())
+  const [quality, setQuality] = useState(() => readQualityPreference())
   const musicEnabledRef = useRef(musicEnabled)
+  const qualityRef = useRef(quality)
+  qualityRef.current = quality
 
   const highScore = highScores[0]?.score || 0
   const showTouchControls = hud.started && !hud.crashed && (inputMode === 'touch' || (inputMode === 'auto' && touchLikely))
@@ -437,6 +483,13 @@ function App() {
     quitRef.current?.()
   }
 
+  function cycleQuality() {
+    const next = quality === 'low' ? 'balanced' : quality === 'balanced' ? 'cinematic' : 'low'
+    qualityRef.current = next
+    writeQualityPreference(next)
+    setQuality(next)
+  }
+
   useEffect(() => {
     const mount = mountRef.current
     const popupLayer = popupsRef.current
@@ -481,6 +534,12 @@ function App() {
     composer.setPixelRatio(pixelRatio)
     composer.setSize(mount.clientWidth, mount.clientHeight)
     composer.addPass(new RenderPass(scene, camera))
+    const gtaoPass = new GTAOPass(scene, camera, Math.ceil(mount.clientWidth * 0.5), Math.ceil(mount.clientHeight * 0.5))
+    gtaoPass.output = GTAOPass.OUTPUT.Default
+    gtaoPass.blendIntensity = 0.38
+    gtaoPass.pdSamples = 8
+    gtaoPass.enabled = false
+    composer.addPass(gtaoPass)
     const fxaaPass = new ShaderPass(FXAAShader)
     fxaaPass.material.uniforms.resolution.value.set(1 / (mount.clientWidth * pixelRatio), 1 / (mount.clientHeight * pixelRatio))
     composer.addPass(fxaaPass)
@@ -539,6 +598,43 @@ function App() {
     }
 
     const hazeTexture = makeRadialTexture()
+
+    function makeWindowTexture(seed) {
+      const canvas = document.createElement('canvas')
+      canvas.width = 96
+      canvas.height = 144
+      const context = canvas.getContext('2d')
+      context.fillStyle = '#000'
+      context.fillRect(0, 0, canvas.width, canvas.height)
+      const random = (x, y) => hashCell(x * 5.17 + seed * 23.1, y * 8.41 - seed * 17.3)
+      for (let y = 5; y < canvas.height - 5; y += 11) {
+        for (let x = 5; x < canvas.width - 5; x += 10) {
+          const lit = random(x, y)
+          if (lit < 0.42) continue
+          context.fillStyle = lit > 0.9 ? '#ffffff' : lit > 0.67 ? '#c8e8ff' : '#7f96b4'
+          context.fillRect(x, y, 5 + (seed % 2), 5)
+        }
+      }
+      const texture = new THREE.CanvasTexture(canvas)
+      texture.colorSpace = THREE.SRGBColorSpace
+      texture.wrapS = THREE.RepeatWrapping
+      texture.wrapT = THREE.RepeatWrapping
+      texture.magFilter = THREE.NearestFilter
+      texture.minFilter = THREE.NearestMipmapNearestFilter
+      texture.repeat.set(2 + (seed % 2), 3 + (seed % 3))
+      return texture
+    }
+
+    const windowColors = [0x1d6f87, 0x6b2b7c, 0x7b4a0b, 0x236a4b]
+    const windowTextures = BUILDING_MATERIALS.map((material, index) => {
+      const texture = makeWindowTexture(index)
+      material.emissive.set(windowColors[index])
+      material.emissiveMap = texture
+      material.emissiveIntensity = 1.5
+      material.needsUpdate = true
+      return texture
+    })
+
     const sunDirection = skyMaterial.uniforms.sunDirection.value
     const moonDirection = skyMaterial.uniforms.moonDirection.value
     const sunDisc = new THREE.Sprite(new THREE.SpriteMaterial({ map: hazeTexture, color: 0xffb17a, transparent: true, opacity: 0.95, depthWrite: false, toneMapped: false }))
@@ -588,6 +684,29 @@ function App() {
     const city = new THREE.Group()
     scene.add(city)
 
+    const streetLightGroup = new THREE.Group()
+    const streetLightCapacity = 1600
+    const streetPoleMaterial = new THREE.MeshStandardMaterial({ color: 0x151228, roughness: 0.62, metalness: 0.48 })
+    const streetHeadMaterial = new THREE.MeshBasicMaterial({ color: 0xffb85c, toneMapped: false })
+    const streetPoles = new THREE.InstancedMesh(UNIT_CYLINDER, streetPoleMaterial, streetLightCapacity)
+    const streetHeads = new THREE.InstancedMesh(UNIT_BOX, streetHeadMaterial, streetLightCapacity)
+    streetPoles.instanceMatrix.setUsage(THREE.DynamicDrawUsage)
+    streetHeads.instanceMatrix.setUsage(THREE.DynamicDrawUsage)
+    streetPoles.count = 0
+    streetHeads.count = 0
+    streetPoles.frustumCulled = false
+    streetHeads.frustumCulled = false
+    const streetHaloGeometry = new THREE.BufferGeometry()
+    const streetHaloPositions = new Float32Array(streetLightCapacity * 3)
+    streetHaloGeometry.setAttribute('position', new THREE.BufferAttribute(streetHaloPositions, 3))
+    streetHaloGeometry.setDrawRange(0, 0)
+    const streetHalos = new THREE.Points(
+      streetHaloGeometry,
+      new THREE.PointsMaterial({ map: hazeTexture, color: 0xffb85c, size: 7.5, sizeAttenuation: true, transparent: true, opacity: 0.75, depthWrite: false, toneMapped: false }),
+    )
+    streetLightGroup.add(streetPoles, streetHeads, streetHalos)
+    scene.add(streetLightGroup)
+
     const targetGroup = new THREE.Group()
     scene.add(targetGroup)
 
@@ -633,6 +752,9 @@ function App() {
 
     const keys = new Set()
     const buildings = new Map()
+    const streetLights = new Map()
+    const streetLightSlots = []
+    const beacons = []
     const bullets = []
     const targets = []
     const ammoCrates = []
@@ -652,7 +774,10 @@ function App() {
     const atmosphereCameraDirection = new THREE.Vector3()
     const atmosphereSide = new THREE.Vector3()
     const atmospherePosition = new THREE.Vector3()
+    const streetLightTransform = new THREE.Object3D()
     const audio = { context: null, master: null, track: null, musicPlaying: false, unlocked: false }
+    let streetLightsDirty = false
+    let activeQuality = null
 
     function getAudioContext() {
       const AudioContext = window.AudioContext || window.webkitAudioContext
@@ -968,6 +1093,61 @@ function App() {
 
     quitRef.current = returnToTitle
 
+    function getStreetLight(cellX, cellZ) {
+      if (cellX === INTRO_OBSTACLE_CELL.x && cellZ === INTRO_OBSTACLE_CELL.z) return null
+      const onNorthSouthAvenue = cellX % 4 === 0
+      const onEastWestAvenue = cellZ % 5 === 0
+      const density = hashCell(cellX + 8.3, cellZ - 17.6)
+      if ((!onNorthSouthAvenue && !onEastWestAvenue) || density < 0.34) return null
+      const offset = density > 0.7 ? 9.5 : -9.5
+      return onNorthSouthAvenue && (!onEastWestAvenue || density > 0.52)
+        ? { x: cellX * spacing + offset, z: cellZ * spacing + 4 }
+        : { x: cellX * spacing + 4, z: cellZ * spacing + offset }
+    }
+
+    function addStreetLight(key, cellX, cellZ) {
+      const position = getStreetLight(cellX, cellZ)
+      if (!position || streetLightSlots.length >= streetLightCapacity) return
+      const light = { key, ...position }
+      streetLights.set(key, light)
+      streetLightSlots.push(light)
+      streetLightsDirty = true
+    }
+
+    function removeStreetLight(key) {
+      const light = streetLights.get(key)
+      if (!light) return
+      const index = streetLightSlots.indexOf(light)
+      const last = streetLightSlots.pop()
+      if (last && last !== light) streetLightSlots[index] = last
+      streetLights.delete(key)
+      streetLightsDirty = true
+    }
+
+    function syncStreetLights() {
+      if (!streetLightsDirty) return
+      streetLightSlots.forEach((light, index) => {
+        streetLightTransform.position.set(light.x, 4.6, light.z)
+        streetLightTransform.scale.set(0.2, 9.2, 0.2)
+        streetLightTransform.updateMatrix()
+        streetPoles.setMatrixAt(index, streetLightTransform.matrix)
+        streetLightTransform.position.y = 9.25
+        streetLightTransform.scale.set(2.1, 0.32, 0.7)
+        streetLightTransform.updateMatrix()
+        streetHeads.setMatrixAt(index, streetLightTransform.matrix)
+        streetHaloPositions[index * 3] = light.x
+        streetHaloPositions[index * 3 + 1] = 9.25
+        streetHaloPositions[index * 3 + 2] = light.z
+      })
+      streetPoles.count = streetLightSlots.length
+      streetHeads.count = streetLightSlots.length
+      streetPoles.instanceMatrix.needsUpdate = true
+      streetHeads.instanceMatrix.needsUpdate = true
+      streetHaloGeometry.attributes.position.needsUpdate = true
+      streetHaloGeometry.setDrawRange(0, streetLightSlots.length)
+      streetLightsDirty = false
+    }
+
     function maintainCity() {
       const currentCellZ = Math.floor(state.position.z / spacing)
       const minZ = currentCellZ - 74
@@ -981,17 +1161,29 @@ function App() {
           if (buildings.has(key)) continue
           const building = createBuilding(x, z, spacing)
           buildings.set(key, building)
-          if (building) city.add(building.mesh)
+          if (building) {
+            city.add(building.mesh)
+            beacons.push(...building.beacons)
+          }
+          addStreetLight(key, x, z)
         }
       }
 
       for (const [key, building] of buildings) {
         const [x, z] = key.split(':').map(Number)
         if (z < minZ - 6 || z > maxZ + 6 || x < minX - 4 || x > maxX + 4) {
-          if (building) city.remove(building.mesh)
+          if (building) {
+            city.remove(building.mesh)
+            building.beacons.forEach((beacon) => {
+              const index = beacons.indexOf(beacon)
+              if (index >= 0) beacons.splice(index, 1)
+            })
+          }
+          removeStreetLight(key)
           buildings.delete(key)
         }
       }
+      syncStreetLights()
     }
 
     function getForwardVector(includePitch = true) {
@@ -1063,6 +1255,35 @@ function App() {
         shaft.mesh.position.copy(atmospherePosition)
         shaft.mesh.quaternion.copy(camera.quaternion)
         shaft.mesh.material.opacity = sunFacing * (0.025 + (index % 2) * 0.012)
+      })
+    }
+
+    function configureQuality(force = false) {
+      const requestedQuality = qualityRef.current
+      if (!force && requestedQuality === activeQuality) return
+      activeQuality = requestedQuality
+      const compactDevice = detectTouchLikely()
+      const effectiveQuality = requestedQuality === 'cinematic' ? 'cinematic' : requestedQuality === 'low' || compactDevice ? 'low' : 'balanced'
+      const composerPixelRatio = effectiveQuality === 'low' ? Math.min(pixelRatio, 1) : pixelRatio
+      const width = mount.clientWidth
+      const height = mount.clientHeight
+      composer.setPixelRatio(composerPixelRatio)
+      composer.setSize(width, height)
+      fxaaPass.material.uniforms.resolution.value.set(1 / (width * composerPixelRatio), 1 / (height * composerPixelRatio))
+      bloomPass.strength = effectiveQuality === 'low' ? 0.46 : effectiveQuality === 'cinematic' ? 0.76 : 0.68
+      bloomPass.radius = effectiveQuality === 'low' ? 0.42 : 0.58
+      gtaoPass.enabled = effectiveQuality === 'cinematic'
+      gtaoPass.setSize(Math.ceil(width * 0.5), Math.ceil(height * 0.5))
+    }
+
+    function updateCityLights(now) {
+      beacons.forEach((beacon) => {
+        const pulse = 0.72 + Math.sin(now * 0.004 + beacon.userData.beaconPhase) * 0.28
+        beacon.scale.setScalar(0.56 + pulse * 0.28)
+        beacon.visible = Math.sin(now * 0.011 + beacon.userData.beaconPhase * 17) > -0.93
+      })
+      plane.userData.navLights.forEach((light, index) => {
+        light.visible = index < 2 || Math.sin(now * 0.016) > -0.15
       })
     }
 
@@ -1547,6 +1768,8 @@ function App() {
       if (!state.crashed) updatePlaneVisual()
       updateCamera(dt)
       updateLighting(now)
+      configureQuality()
+      updateCityLights(now)
       updateBullets(dt)
       updateExplosions(dt)
       updateCrashPieces(dt)
@@ -1618,8 +1841,7 @@ function App() {
       camera.aspect = width / height
       camera.updateProjectionMatrix()
       renderer.setSize(width, height)
-      composer.setSize(width, height)
-      fxaaPass.material.uniforms.resolution.value.set(1 / (width * pixelRatio), 1 / (height * pixelRatio))
+      configureQuality(true)
     }
 
     window.addEventListener('keydown', onKeyDown)
@@ -1629,6 +1851,7 @@ function App() {
     renderer.domElement.addEventListener('click', onClick)
 
     setupSpeedLines()
+    configureQuality(true)
     setHud({ score: 0, speed: state.speed, altitude: state.position.y, hits: 0, ammo: state.ammo, crashed: false, started: false })
     rafId = requestAnimationFrame(animate)
 
@@ -1655,6 +1878,15 @@ function App() {
         audio.track.src = ''
       }
       if (audio.context) audio.context.close()
+      streetPoleMaterial.dispose()
+      streetHeadMaterial.dispose()
+      streetHaloGeometry.dispose()
+      streetHalos.material.dispose()
+      windowTextures.forEach((texture) => texture.dispose())
+      BUILDING_MATERIALS.forEach((material) => {
+        material.emissiveMap = null
+        material.needsUpdate = true
+      })
       ;[sunDisc, sunHalo, moonDisc, moonHalo].forEach((sprite) => sprite.material.dispose())
       hazeLayers.forEach((layer) => layer.sprite.material.dispose())
       shafts.forEach((shaft) => shaft.mesh.material.dispose())
@@ -1715,6 +1947,15 @@ function App() {
         aria-label={musicEnabled ? 'Turn music off' : 'Turn music on'}
       >
         {musicEnabled ? '♫ Music on' : 'Music off'}
+      </button>
+
+      <button
+        type="button"
+        className={`quality-toggle is-${quality}`}
+        onClick={cycleQuality}
+        aria-label={`Rendering quality: ${quality}. Activate to change quality.`}
+      >
+        {quality === 'cinematic' ? 'Quality: cinematic' : quality === 'low' ? 'Quality: low' : 'Quality: balanced'}
       </button>
 
       <div ref={mountRef} className="viewport" aria-label="Stratus playable 3D flight game" />
