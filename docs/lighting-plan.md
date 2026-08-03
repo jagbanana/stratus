@@ -4,8 +4,8 @@
 
 Captured 2026-08-02 after a direct repository review. Pass 1 was implemented
 and pushed as `574eb8c` (`Add cinematic lighting pass`). Justin then authorized
-Pass 2; its local implementation is complete and awaits a separate publish
-instruction. Gameplay behavior remains unchanged.
+Pass 2, which was implemented and pushed as `5e21e45` (`Add living city
+lighting pass`). Gameplay behavior remains unchanged.
 
 ## Project constraints verified during review
 
