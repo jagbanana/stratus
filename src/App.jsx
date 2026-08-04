@@ -822,8 +822,6 @@ function App() {
     const atmospherePosition = new THREE.Vector3()
     const streetLightTransform = new THREE.Object3D()
     const wingTrailStart = new THREE.Vector3()
-    const wingTrailEnd = new THREE.Vector3()
-    const wingTrailDirection = new THREE.Vector3()
     const audio = { context: null, master: null, track: null, musicPlaying: false, unlocked: false }
     let streetLightsDirty = false
     let activeQuality = null
@@ -981,13 +979,15 @@ function App() {
       reset: resetMusic,
     }
 
-    function makeTextTexture(text, color = '#ffffff') {
+    const goMarkerSize = new THREE.Vector2(34, 17)
+
+    function makeTextTexture(text, color = '#ffffff', fontSize = text === 'GO!' ? 112 : 164) {
       const canvas = document.createElement('canvas')
       canvas.width = 512
       canvas.height = 256
       const context = canvas.getContext('2d')
       context.clearRect(0, 0, canvas.width, canvas.height)
-      context.font = text === 'GO!' ? '900 112px Arial Black, Impact, sans-serif' : '900 164px Arial Black, Impact, sans-serif'
+      context.font = `900 ${fontSize}px Arial Black, Impact, sans-serif`
       context.textAlign = 'center'
       context.textBaseline = 'middle'
       context.lineWidth = 16
@@ -1020,7 +1020,7 @@ function App() {
         const sprite = new THREE.Sprite(material)
         sprite.position.copy(state.position).addScaledVector(forward, marker.distance)
         sprite.position.y += marker.text === 'GO!' ? 4 : 1
-        sprite.scale.set(marker.text === 'GO!' ? 34 : 24, marker.text === 'GO!' ? 17 : 12, 1)
+        sprite.scale.set(marker.text === 'GO!' ? goMarkerSize.x : 24, marker.text === 'GO!' ? goMarkerSize.y : 12, 1)
         effectGroup.add(sprite)
         countdownMarkers.push({ mesh: sprite, distance: marker.distance })
       })
@@ -1040,17 +1040,17 @@ function App() {
       const colors = ['#ff2bd6', '#16f7ff', '#ffb000', '#7dff72']
       const index = Math.floor(Math.random() * words.length)
       const forward = getForwardVector(false)
-      const material = new THREE.SpriteMaterial({ map: makeTextTexture(words[index], colors[index]), transparent: true, depthWrite: false })
+      const material = new THREE.SpriteMaterial({ map: makeTextTexture(words[index], colors[index], 112), transparent: true, depthWrite: false })
       const sprite = new THREE.Sprite(material)
       sprite.position.copy(state.position).addScaledVector(forward, 106)
       sprite.position.y += 7
-      sprite.scale.set(68, 34, 1)
+      sprite.scale.set(goMarkerSize.x, goMarkerSize.y, 1)
       effectGroup.add(sprite)
 
       const flash = document.createElement('div')
       flash.className = 'score-flash'
       popupLayer?.appendChild(flash)
-      scoreCelebrations.push({ mesh: sprite, flash })
+      scoreCelebrations.push({ mesh: sprite, flash, baseScale: goMarkerSize.clone() })
       playTone({ frequency: 660, endFrequency: 1320, type: 'square', gain: 0.22, duration: 0.17 })
       playTone({ frequency: 990, endFrequency: 1760, type: 'triangle', gain: 0.17, duration: 0.24, delay: 0.07 })
     }
@@ -1061,7 +1061,8 @@ function App() {
         const celebration = scoreCelebrations[index]
         const ahead = tempVector.copy(celebration.mesh.position).sub(state.position).dot(forward)
         celebration.mesh.material.opacity = clamp((ahead + 16) / 62, 0, 1)
-        celebration.mesh.scale.setScalar(1 + clamp((30 - ahead) / 90, 0, 0.42))
+        const pulse = 1 + clamp((30 - ahead) / 90, 0, 0.42)
+        celebration.mesh.scale.set(celebration.baseScale.x * pulse, celebration.baseScale.y * pulse, 1)
         if (ahead < -30) {
           effectGroup.remove(celebration.mesh)
           celebration.mesh.material.map.dispose()
@@ -1094,30 +1095,53 @@ function App() {
     }
 
     const wingTrails = [0xff2bd6, 0x16f7ff].map((color) => {
-      const mesh = new THREE.Mesh(
-        new THREE.ConeGeometry(0.54, 1, 6, 1, true),
-        new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide, toneMapped: false }),
-      )
-      effectGroup.add(mesh)
-      return mesh
+      const geometry = new THREE.BufferGeometry()
+      geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(96 * 3), 3))
+      geometry.setDrawRange(0, 0)
+      const line = new THREE.Line(geometry, new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0, depthWrite: false, toneMapped: false }))
+      const glow = new THREE.Points(geometry, new THREE.PointsMaterial({ color, size: 0.52, sizeAttenuation: true, transparent: true, opacity: 0, depthWrite: false, toneMapped: false }))
+      line.frustumCulled = false
+      glow.frustumCulled = false
+      effectGroup.add(line, glow)
+      return { geometry, line, glow, history: [], sampleTime: 0 }
     })
 
-    function updateWingTrails() {
+    function clearWingTrails() {
+      wingTrails.forEach((trail) => {
+        trail.history.length = 0
+        trail.sampleTime = 0
+        trail.geometry.setDrawRange(0, 0)
+        trail.line.material.opacity = 0
+        trail.glow.material.opacity = 0
+      })
+    }
+
+    function updateWingTrails(dt) {
       const visible = state.started && !state.crashed
-      const forward = getForwardVector(true)
+      if (!visible) {
+        clearWingTrails()
+        return
+      }
       wingTrails.forEach((trail, index) => {
-        if (!visible) {
-          trail.material.opacity = 0
-          return
-        }
         wingTrailStart.copy(plane.userData.wingTips[index])
         plane.localToWorld(wingTrailStart)
-        wingTrailEnd.copy(wingTrailStart).addScaledVector(forward, -(7 + state.speed * 0.26))
-        wingTrailDirection.copy(wingTrailEnd).sub(wingTrailStart)
-        trail.position.copy(wingTrailStart).addScaledVector(wingTrailDirection, 0.5)
-        trail.quaternion.setFromUnitVectors(worldUp, wingTrailDirection.normalize())
-        trail.scale.set(1, wingTrailStart.distanceTo(wingTrailEnd), 1)
-        trail.material.opacity = clamp(0.18 + state.speed / 220, 0.18, 0.53)
+        trail.sampleTime += dt
+        if (trail.history.length === 0 || trail.sampleTime >= 0.028) {
+          trail.history.unshift(wingTrailStart.clone())
+          trail.sampleTime = 0
+        }
+
+        const maxTrailDistance = Math.max(16, wingTrailStart.distanceTo(camera.position) + 4)
+        while (trail.history.length > 2 && trail.history[trail.history.length - 1].distanceTo(wingTrailStart) > maxTrailDistance) {
+          trail.history.pop()
+        }
+
+        const positions = trail.geometry.attributes.position
+        trail.history.forEach((point, pointIndex) => positions.setXYZ(pointIndex, point.x, point.y, point.z))
+        positions.needsUpdate = true
+        trail.geometry.setDrawRange(0, trail.history.length)
+        trail.line.material.opacity = clamp(0.6 + state.speed / 250, 0.6, 0.86)
+        trail.glow.material.opacity = clamp(0.24 + state.speed / 500, 0.24, 0.38)
       })
     }
 
@@ -1156,6 +1180,7 @@ function App() {
       crashPieces.splice(0).forEach((piece) => effectGroup.remove(piece.mesh))
       popups.splice(0).forEach((popup) => popup.element.remove())
       clearScoreCelebrations()
+      clearWingTrails()
       countdownMarkers.splice(0).forEach((marker) => {
         effectGroup.remove(marker.mesh)
         marker.mesh.material.map.dispose()
@@ -1904,7 +1929,7 @@ function App() {
       configureQuality()
       updateCityLights(now)
       updateBullets(dt)
-      updateWingTrails()
+      updateWingTrails(dt)
       updateExplosions(dt)
       updateCrashPieces(dt)
       if (plane.visible) plane.userData.afterburner.scale.setScalar(0.82 + Math.sin(now * 0.022) * 0.1 + state.speed / 180)
@@ -2007,6 +2032,13 @@ function App() {
         effectGroup.remove(line.mesh)
         line.mesh.geometry.dispose()
         line.mesh.material.dispose()
+      })
+      wingTrails.forEach((trail) => {
+        effectGroup.remove(trail.line)
+        effectGroup.remove(trail.glow)
+        trail.geometry.dispose()
+        trail.line.material.dispose()
+        trail.glow.material.dispose()
       })
       if (audio.track) {
         audio.track.pause()
