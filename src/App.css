@@ -43,6 +43,20 @@
   overflow: hidden;
 }
 
+.score-flash {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle, rgba(255, 255, 255, 0.78) 0%, rgba(22, 247, 255, 0.3) 18%, rgba(255, 43, 214, 0.18) 42%, transparent 72%);
+  mix-blend-mode: screen;
+  animation: score-flash 640ms ease-out forwards;
+}
+
+@keyframes score-flash {
+  from { opacity: 0; transform: scale(0.72); }
+  18% { opacity: 0.95; }
+  to { opacity: 0; transform: scale(1.16); }
+}
+
 .score-pop {
   position: absolute;
   left: 0;

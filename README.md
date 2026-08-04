@@ -1,11 +1,11 @@
 # Stratus
 
-A lo-fi third-person browser flight game: fly a propeller plane through a PS1-ish neon dusk city, stay low, and avoid turning the aircraft into expensive confetti.
+A lo-fi third-person browser flight game: fly a low-poly fighter jet through a PS1-ish neon dusk city, stay low, and avoid turning the aircraft into expensive confetti.
 
 ## Current prototype
 
 - Vite + React + Three.js static app
-- Third-person propeller plane
+- Third-person F-16-inspired fighter jet
 - Procedural low-poly cyberpunk city
 - Arcade flight controls
 - Collision with buildings / ground
@@ -19,7 +19,7 @@ A lo-fi third-person browser flight game: fly a propeller plane through a PS1-is
 - `A` / `ArrowLeft`: turn left
 - `D` / `ArrowRight`: turn right
 - `Shift`: boost
-- `Space`: brake
+- `Space`: fire the cockpit-side cannon
 - Click game window: capture mouse for optional steering
 - `R` or `Enter`: restart
 

@@ -240,57 +240,97 @@ function createBuilding(cellX, cellZ, spacing) {
 function createPlane() {
   const plane = new THREE.Group()
 
+  const airframeMaterial = new THREE.MeshStandardMaterial({ color: 0xc5c8de, roughness: 0.44, metalness: 0.56 })
+  const darkAirframeMaterial = new THREE.MeshStandardMaterial({ color: 0x252b46, roughness: 0.5, metalness: 0.46 })
+  const accentMaterial = new THREE.MeshStandardMaterial({ color: 0x19f5ff, emissive: 0x063a44, roughness: 0.38, metalness: 0.28 })
+
   const body = new THREE.Mesh(
-    new THREE.BoxGeometry(1.2, 0.9, 4.4),
-    new THREE.MeshStandardMaterial({ color: 0xd7d7ff, roughness: 0.62, metalness: 0.18 }),
+    new THREE.CylinderGeometry(0.48, 0.76, 4.95, 8),
+    airframeMaterial,
   )
+  body.rotation.x = Math.PI / 2
   body.castShadow = true
   plane.add(body)
 
   const nose = new THREE.Mesh(
-    new THREE.ConeGeometry(0.66, 1.1, 6),
-    new THREE.MeshStandardMaterial({ color: 0xff5ac8, roughness: 0.45, metalness: 0.2 }),
+    new THREE.ConeGeometry(0.5, 1.55, 8),
+    airframeMaterial,
   )
   nose.rotation.x = Math.PI / 2
-  nose.position.z = -2.65
+  nose.position.z = -3.2
+  nose.castShadow = true
   plane.add(nose)
 
-  const wing = new THREE.Mesh(
-    new THREE.BoxGeometry(6.4, 0.16, 1.1),
-    new THREE.MeshStandardMaterial({ color: 0x19f5ff, roughness: 0.48, metalness: 0.18 }),
+  const canopy = new THREE.Mesh(
+    new THREE.SphereGeometry(1, 10, 6),
+    new THREE.MeshStandardMaterial({ color: 0x16445f, emissive: 0x062234, roughness: 0.15, metalness: 0.72, transparent: true, opacity: 0.94 }),
   )
-  wing.position.z = -0.3
-  wing.castShadow = true
-  plane.add(wing)
+  canopy.position.set(0, 0.48, -0.72)
+  canopy.scale.set(0.63, 0.42, 1.36)
+  canopy.castShadow = true
+  plane.add(canopy)
 
-  const tail = new THREE.Mesh(
-    new THREE.BoxGeometry(2.8, 0.12, 0.65),
-    new THREE.MeshStandardMaterial({ color: 0xffb000, roughness: 0.55, metalness: 0.12 }),
-  )
-  tail.position.z = 2.0
-  tail.position.y = 0.3
-  plane.add(tail)
+  const makeSweptSurface = (points, material) => {
+    const shape = new THREE.Shape()
+    shape.moveTo(points[0][0], points[0][1])
+    points.slice(1).forEach(([x, z]) => shape.lineTo(x, z))
+    shape.closePath()
+    const mesh = new THREE.Mesh(new THREE.ExtrudeGeometry(shape, { depth: 0.13, bevelEnabled: false }), material)
+    mesh.rotation.x = Math.PI / 2
+    mesh.castShadow = true
+    return mesh
+  }
+
+  const leftWing = makeSweptSurface([
+    [-0.25, -1.7], [-4.95, 0.65], [-4.25, 1.22], [-0.35, 0.68],
+  ], accentMaterial)
+  const rightWing = makeSweptSurface([
+    [0.25, -1.7], [4.95, 0.65], [4.25, 1.22], [0.35, 0.68],
+  ], accentMaterial)
+  plane.add(leftWing, rightWing)
+
+  const leftTail = makeSweptSurface([
+    [-0.22, 1.28], [-2.25, 2.28], [-1.65, 2.58], [-0.28, 2.22],
+  ], darkAirframeMaterial)
+  const rightTail = makeSweptSurface([
+    [0.22, 1.28], [2.25, 2.28], [1.65, 2.58], [0.28, 2.22],
+  ], darkAirframeMaterial)
+  leftTail.position.y = 0.18
+  rightTail.position.y = 0.18
+  plane.add(leftTail, rightTail)
 
   const fin = new THREE.Mesh(
-    new THREE.BoxGeometry(0.18, 1.2, 0.72),
-    new THREE.MeshStandardMaterial({ color: 0xff2bd6, roughness: 0.5 }),
+    new THREE.ConeGeometry(0.76, 1.78, 3),
+    darkAirframeMaterial,
   )
-  fin.position.z = 1.88
-  fin.position.y = 0.78
+  fin.rotation.y = Math.PI / 2
+  fin.scale.set(0.3, 1, 1.24)
+  fin.position.z = 2.04
+  fin.position.y = 0.86
+  fin.castShadow = true
   plane.add(fin)
 
-  const prop = new THREE.Mesh(
-    new THREE.BoxGeometry(0.14, 3.1, 0.12),
-    new THREE.MeshBasicMaterial({ color: 0xf8f8ff, transparent: true, opacity: 0.72 }),
+  const engineNozzle = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.64, 0.82, 0.74, 8, 1, true),
+    new THREE.MeshBasicMaterial({ color: 0x101729, side: THREE.DoubleSide }),
   )
-  prop.position.z = -3.28
-  plane.add(prop)
-  plane.userData.prop = prop
+  engineNozzle.rotation.x = Math.PI / 2
+  engineNozzle.position.z = 2.82
+  plane.add(engineNozzle)
+
+  const afterburner = new THREE.Mesh(
+    new THREE.CircleGeometry(0.5, 10),
+    new THREE.MeshBasicMaterial({ color: 0xff7b35, transparent: true, opacity: 0.86, toneMapped: false }),
+  )
+  afterburner.position.z = 3.22
+  plane.add(afterburner)
+  plane.userData.afterburner = afterburner
+  plane.userData.wingTips = [new THREE.Vector3(-4.62, 0.02, 0.78), new THREE.Vector3(4.62, 0.02, 0.78)]
 
   const navLights = [
-    [0xff365e, new THREE.Vector3(-3.18, 0.08, -0.25)],
-    [0x55ffbd, new THREE.Vector3(3.18, 0.08, -0.25)],
-    [0xe8f5ff, new THREE.Vector3(0, 0.64, 2.2)],
+    [0xff365e, new THREE.Vector3(-4.64, 0.05, 0.82)],
+    [0x55ffbd, new THREE.Vector3(4.64, 0.05, 0.82)],
+    [0xe8f5ff, new THREE.Vector3(0, 1.52, 2.08)],
   ].map(([color, position]) => {
     const light = new THREE.Mesh(
       new THREE.BoxGeometry(0.25, 0.12, 0.25),
@@ -740,6 +780,7 @@ function App() {
       roll: 0,
       speed: 42,
       score: 0,
+      nextCelebrationScore: 1000,
       hits: 0,
       ammo: MAX_AMMO,
       started: false,
@@ -766,6 +807,7 @@ function App() {
     const crashPieces = []
     const popups = []
     const countdownMarkers = []
+    const scoreCelebrations = []
     const speedLines = []
     const spacing = 34
     const worldUp = new THREE.Vector3(0, 1, 0)
@@ -779,6 +821,9 @@ function App() {
     const atmosphereSide = new THREE.Vector3()
     const atmospherePosition = new THREE.Vector3()
     const streetLightTransform = new THREE.Object3D()
+    const wingTrailStart = new THREE.Vector3()
+    const wingTrailEnd = new THREE.Vector3()
+    const wingTrailDirection = new THREE.Vector3()
     const audio = { context: null, master: null, track: null, musicPlaying: false, unlocked: false }
     let streetLightsDirty = false
     let activeQuality = null
@@ -861,9 +906,8 @@ function App() {
     }
 
     function playShootSound() {
-      playNoise({ gain: 0.09, duration: 0.055, lowpass: 4200, pan: -0.24 })
-      playNoise({ gain: 0.09, duration: 0.055, delay: 0.012, lowpass: 4200, pan: 0.24 })
-      playTone({ frequency: 155, endFrequency: 78, type: 'sawtooth', gain: 0.08, duration: 0.07 })
+      playNoise({ gain: 0.15, duration: 0.06, lowpass: 4400, pan: -0.16 })
+      playTone({ frequency: 172, endFrequency: 72, type: 'sawtooth', gain: 0.1, duration: 0.08, pan: -0.16 })
     }
 
     function playTargetHitSound() {
@@ -982,6 +1026,52 @@ function App() {
       })
     }
 
+    function clearScoreCelebrations() {
+      scoreCelebrations.splice(0).forEach((celebration) => {
+        effectGroup.remove(celebration.mesh)
+        celebration.mesh.material.map.dispose()
+        celebration.mesh.material.dispose()
+        celebration.flash?.remove()
+      })
+    }
+
+    function spawnScoreCelebration() {
+      const words = ['STREAK', 'AWESOME', 'SUPER', 'ACE']
+      const colors = ['#ff2bd6', '#16f7ff', '#ffb000', '#7dff72']
+      const index = Math.floor(Math.random() * words.length)
+      const forward = getForwardVector(false)
+      const material = new THREE.SpriteMaterial({ map: makeTextTexture(words[index], colors[index]), transparent: true, depthWrite: false })
+      const sprite = new THREE.Sprite(material)
+      sprite.position.copy(state.position).addScaledVector(forward, 106)
+      sprite.position.y += 7
+      sprite.scale.set(68, 34, 1)
+      effectGroup.add(sprite)
+
+      const flash = document.createElement('div')
+      flash.className = 'score-flash'
+      popupLayer?.appendChild(flash)
+      scoreCelebrations.push({ mesh: sprite, flash })
+      playTone({ frequency: 660, endFrequency: 1320, type: 'square', gain: 0.22, duration: 0.17 })
+      playTone({ frequency: 990, endFrequency: 1760, type: 'triangle', gain: 0.17, duration: 0.24, delay: 0.07 })
+    }
+
+    function updateScoreCelebrations() {
+      const forward = getForwardVector(false)
+      for (let index = scoreCelebrations.length - 1; index >= 0; index -= 1) {
+        const celebration = scoreCelebrations[index]
+        const ahead = tempVector.copy(celebration.mesh.position).sub(state.position).dot(forward)
+        celebration.mesh.material.opacity = clamp((ahead + 16) / 62, 0, 1)
+        celebration.mesh.scale.setScalar(1 + clamp((30 - ahead) / 90, 0, 0.42))
+        if (ahead < -30) {
+          effectGroup.remove(celebration.mesh)
+          celebration.mesh.material.map.dispose()
+          celebration.mesh.material.dispose()
+          celebration.flash?.remove()
+          scoreCelebrations.splice(index, 1)
+        }
+      }
+    }
+
     function updateCountdownMarkers() {
       const forward = getForwardVector(false)
       countdownMarkers.forEach((marker) => {
@@ -1001,6 +1091,34 @@ function App() {
         effectGroup.add(mesh)
         speedLines.push({ mesh, offset: new THREE.Vector3(), seed: Math.random() })
       }
+    }
+
+    const wingTrails = [0xff2bd6, 0x16f7ff].map((color) => {
+      const mesh = new THREE.Mesh(
+        new THREE.ConeGeometry(0.54, 1, 6, 1, true),
+        new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide, toneMapped: false }),
+      )
+      effectGroup.add(mesh)
+      return mesh
+    })
+
+    function updateWingTrails() {
+      const visible = state.started && !state.crashed
+      const forward = getForwardVector(true)
+      wingTrails.forEach((trail, index) => {
+        if (!visible) {
+          trail.material.opacity = 0
+          return
+        }
+        wingTrailStart.copy(plane.userData.wingTips[index])
+        plane.localToWorld(wingTrailStart)
+        wingTrailEnd.copy(wingTrailStart).addScaledVector(forward, -(7 + state.speed * 0.26))
+        wingTrailDirection.copy(wingTrailEnd).sub(wingTrailStart)
+        trail.position.copy(wingTrailStart).addScaledVector(wingTrailDirection, 0.5)
+        trail.quaternion.setFromUnitVectors(worldUp, wingTrailDirection.normalize())
+        trail.scale.set(1, wingTrailStart.distanceTo(wingTrailEnd), 1)
+        trail.material.opacity = clamp(0.18 + state.speed / 220, 0.18, 0.53)
+      })
     }
 
     function resetSpeedLine(line, boostFactor = 1) {
@@ -1037,6 +1155,7 @@ function App() {
       explosions.splice(0).forEach((particle) => effectGroup.remove(particle.mesh))
       crashPieces.splice(0).forEach((piece) => effectGroup.remove(piece.mesh))
       popups.splice(0).forEach((popup) => popup.element.remove())
+      clearScoreCelebrations()
       countdownMarkers.splice(0).forEach((marker) => {
         effectGroup.remove(marker.mesh)
         marker.mesh.material.map.dispose()
@@ -1052,6 +1171,7 @@ function App() {
       state.roll = 0
       state.speed = 42
       state.score = 0
+      state.nextCelebrationScore = 1000
       state.hits = 0
       state.ammo = MAX_AMMO
       state.fireCooldown = 0
@@ -1080,6 +1200,7 @@ function App() {
       state.roll = 0
       state.speed = 42
       state.score = 0
+      state.nextCelebrationScore = 1000
       state.hits = 0
       state.ammo = MAX_AMMO
       state.fireCooldown = 0
@@ -1204,7 +1325,7 @@ function App() {
     function updatePlaneVisual() {
       const forward = getForwardVector(true)
       // Three.js object lookAt points local +Z at the target. Our plane model's
-      // nose/prop live on local -Z, so aim +Z backward to keep the nose aligned
+      // The jet's nose lives on local -Z, so aim +Z backward to keep it aligned
       // with the actual flight vector.
       visualTarget.copy(state.position).addScaledVector(forward, -1)
       plane.position.copy(state.position)
@@ -1311,10 +1432,8 @@ function App() {
     function fireGuns() {
       playShootSound()
       const forward = getForwardVector(true)
-      ;[-3.25, 3.25].forEach((x) => {
-        const start = plane.localToWorld(new THREE.Vector3(x, -0.02, -0.92))
-        makeTracer(start, forward)
-      })
+      const start = plane.localToWorld(new THREE.Vector3(-0.7, -0.08, -1.3))
+      makeTracer(start, forward)
     }
 
     function createExplosion(position) {
@@ -1664,6 +1783,13 @@ function App() {
       }
     }
 
+    function checkScoreCelebrations() {
+      while (state.score >= state.nextCelebrationScore) {
+        spawnScoreCelebration()
+        state.nextCelebrationScore += 1000
+      }
+    }
+
     function checkCrash() {
       const radius = 2.35
       if (state.position.y < 4) return true
@@ -1758,6 +1884,7 @@ function App() {
           checkAmmoCrateFlyThrough()
 
           state.score += dt * state.speed * 0.55
+          checkScoreCelebrations()
           state.mouseX *= 0.82
           state.mouseY *= 0.82
 
@@ -1777,9 +1904,10 @@ function App() {
       configureQuality()
       updateCityLights(now)
       updateBullets(dt)
+      updateWingTrails()
       updateExplosions(dt)
       updateCrashPieces(dt)
-      if (plane.visible) plane.userData.prop.rotation.z += dt * state.speed * 2.7
+      if (plane.visible) plane.userData.afterburner.scale.setScalar(0.82 + Math.sin(now * 0.022) * 0.1 + state.speed / 180)
       if (state.crashed && state.crashModalDelay > 0) {
         state.crashModalDelay -= dt
         if (state.crashModalDelay <= 0) {
@@ -1793,6 +1921,7 @@ function App() {
 
       updateSpeedLines(dt, throttle && state.countdown <= 0 && !state.crashed)
       updateScorePopups(dt)
+      updateScoreCelebrations()
       composer.render()
 
       state.hudTime += dt
